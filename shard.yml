@@ -1,0 +1,24 @@
+name: semrember
+version: 1.0.0
+
+description: |
+  Compressed associative memory: byte n-gram TF-IDF fused with optional
+  static embeddings, a regularized ridge writer, and an exact kernel-dual
+  writer with hard replacement, attribution and counterfactual previews.
+  Ships as an embeddable library, a CLI and a Redis-style HTTP/JSON service.
+
+authors:
+  - semrember contributors
+
+license: MIT
+
+crystal: ">= 1.11.0"
+
+targets:
+  semrember:
+    main: src/cli.cr
+  semrember-server:
+    main: src/server.cr
+
+# The engine is dependency-free: no shards, no C libraries, no runtime
+# dependencies beyond libc.  A single static binary is the whole artefact.

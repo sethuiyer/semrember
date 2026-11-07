@@ -1,0 +1,17 @@
+# build artifacts
+/build/
+*.o
+*.a
+*.so
+
+# Crystal
+.lib/
+.cr-cache/
+shards.lock
+
+# Python
+__pycache__/
+*.pyc
+
+# models are large and are fetched separately
+*.bin

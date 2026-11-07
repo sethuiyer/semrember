@@ -1,0 +1,35 @@
+message,action
+No space left on device,free_disk
+write failed: ENOSPC,free_disk
+filesystem is full,free_disk
+disk quota exceeded,free_disk
+inode exhaustion on /var,free_disk
+service entered failed state,restart_service
+unit nginx.service failed,restart_service
+crash loop backoff,restart_service
+daemon terminated unexpectedly,restart_service
+certificate has expired,renew_certificate
+TLS handshake failed: certificate verify failed,renew_certificate
+x509: certificate signed by unknown authority,renew_certificate
+Temporary failure in name resolution,fix_dns
+could not resolve host api.example.com,fix_dns
+DNS lookup timed out,fix_dns
+read-only file system,remount_rw
+cannot write: read-only file system,remount_rw
+failed to remount rw,remount_rw
+cache lookup failed,clear_cache
+stale cache entry,clear_cache
+cache corruption detected,clear_cache
+Out of memory,increase_memory
+OOM killer invoked,increase_memory
+memory cgroup limit reached,increase_memory
+permission denied,fix_permissions
+operation not permitted,fix_permissions
+EACCES opening /etc/shadow,fix_permissions
+configuration validation failed,rollback_config
+unknown directive in config,rollback_config
+config parse error,rollback_config
+network is unreachable,restart_network
+connection refused,restart_network
+no route to host,restart_network
+link is down,restart_network
