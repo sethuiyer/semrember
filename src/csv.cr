@@ -47,11 +47,11 @@ module Semrember
             row << field.to_s
             field = IO::Memory.new
             field_started = false
-          elsif c == '\n'.ord
+          elsif c == '\n'.ord || c == '\r'.ord
             f = field.to_s
-            f = f.byte_slice(0, f.bytesize - 1) if f.ends_with?('\r')
-            row << f unless f.empty? && row.empty?
+            row << f
             rows << row
+            off += 1 if c == '\r'.ord && off + 1 < bytes.size && bytes[off + 1] == '\n'.ord
             row = [] of String
             field = IO::Memory.new
             field_started = false
@@ -62,7 +62,8 @@ module Semrember
         end
         off += 1
       end
-      row << field.to_s unless field.empty?
+      raise ArgumentError.new("unterminated quoted CSV field") if in_quotes
+      row << field.to_s if field_started || !field.empty? || !row.empty?
       rows << row unless row.empty?
       rows
     end

@@ -9,13 +9,13 @@ semrember — Python client for the semrember service.
     kb.similar("disk full")                  # [{key, value, score}, ...]
     kb.escalate("ImagePullBackOff")          # {decision, reason, margin, novelty, ...}
 
-The API is Redis-shaped: the exact operations (GET, SET, DELETE, EXISTS,
-SCAN, EXPIRE, TTL) never invoke the model, and the semantic operations
+The API is Redis-shaped: exact reads return dictionary values, writes
+maintain the semantic index, and the semantic operations
 (SIMILAR, ESCALATE, NOVELTY) always return candidates and confidence
 rather than a bare answer.
 
 Standard library only — no requests, no redis-py, no numpy.  The service
-itself is a single static binary with no runtime dependencies.
+itself is a compiled binary; static linking is an optional build mode.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Iterable
+from typing import Any
 
 __all__ = ["Semrember", "SemremberError"]
 
@@ -32,6 +32,10 @@ DEFAULT_URL = "http://127.0.0.1:7379"
 
 class SemremberError(RuntimeError):
     """Raised when the service returns an error response."""
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 class Semrember:
@@ -59,12 +63,16 @@ class Semrember:
             status = exc.code
         except urllib.error.URLError as exc:
             raise SemremberError(f"cannot reach {self.url}: {exc.reason}") from exc
+        except TimeoutError as exc:
+            raise SemremberError(f"request to {self.url} timed out") from exc
         try:
             parsed = json.loads(payload) if payload else {}
         except json.JSONDecodeError as exc:
             raise SemremberError(f"malformed response: {payload[:120]!r}") from exc
+        if not isinstance(parsed, dict):
+            raise SemremberError("malformed response: expected a JSON object", status)
         if status >= 400:
-            raise SemremberError(parsed.get("error", f"HTTP {status}"))
+            raise SemremberError(parsed.get("error", f"HTTP {status}"), status)
         return parsed
 
     @staticmethod
@@ -78,13 +86,13 @@ class Semrember:
     def info(self) -> dict:
         return self._request("GET", "/v1/info")
 
-    # ── exact operations (never invoke the model) ────────────────────────
+    # ── exact operations ────────────────────────────────────────────────
     def get(self, key: str) -> str | None:
         """The stored value, or None when the key is absent."""
         try:
             return self._request("GET", self._key_path(key)).get("value")
         except SemremberError as exc:
-            if "not found" in str(exc):
+            if exc.status == 404:
                 return None
             raise
 

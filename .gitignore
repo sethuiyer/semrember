@@ -7,7 +7,7 @@
 # Crystal
 .lib/
 .cr-cache/
-shards.lock
+/lib/
 
 # Python
 __pycache__/

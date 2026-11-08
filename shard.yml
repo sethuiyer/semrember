@@ -4,7 +4,7 @@ version: 1.0.0
 description: |
   Compressed associative memory: byte n-gram TF-IDF fused with optional
   static embeddings, a regularized ridge writer, and an exact kernel-dual
-  writer with hard replacement, attribution and counterfactual previews.
+  writer with replacement and incremental insertion.
   Ships as an embeddable library, a CLI and a Redis-style HTTP/JSON service.
 
 authors:
@@ -12,13 +12,18 @@ authors:
 
 license: MIT
 
-crystal: ">= 1.11.0"
+crystal: ">= 1.12.0"
+
+dependencies:
+  kemal:
+    github: kemalcr/kemal
+    version: 1.15.0
 
 targets:
   semrember:
     main: src/cli.cr
   semrember-server:
-    main: src/server.cr
+    main: src/server_cli.cr
 
-# The engine is dependency-free: no shards, no C libraries, no runtime
-# dependencies beyond libc.  A single static binary is the whole artefact.
+# The memory engine and CLI need no shards. The HTTP service uses Kemal.
+# The default build links system libraries; static linking is optional.
