@@ -7,6 +7,10 @@ Errors carry a non-2xx status and an `error` string.
 The command names are borrowed from Redis so the concepts transfer. The
 protocol is not RESP and does not claim Redis compatibility.
 
+For a runnable walkthrough, start with the [five-minute quickstart](docs/QUICKSTART.md).
+See [API examples](docs/EXAMPLES.md) for curl, Python and JavaScript, and
+[memory and persistence](docs/MEMORY.md) for the live-service/AMEM distinction.
+
 ---
 
 ## Exact operations
@@ -94,9 +98,9 @@ revived by EXPIRE.
 
 ## Semantic operations
 
-These invoke the model. They return **candidates and confidence**, never a
-bare answer: several records may share one label, so a single value would
-be a lie.
+These invoke the model and return candidates, raw scores, and decision
+heuristics. Scores are not probabilities or guarantees. Several records
+may share a label; use SIMILAR when you need evidence tied to stored keys.
 
 ### `POST /v1/similar`
 
@@ -132,19 +136,18 @@ Two independent gates decide, and `reason` names which one fired:
 
 | reason | meaning |
 |---|---|
-| `handled` | act on `action` |
-| `ambiguous` | in the taxonomy, but two actions are close — a human picks |
-| `out_of_domain` | nothing stored resembles this — the taxonomy has a gap |
-| `both` | unfamiliar *and* ambiguous |
+| `handled` | both gates passed; `action` is a suggestion for the application |
+| `ambiguous` | the top-label margin is below the configured threshold |
+| `out_of_domain` | lexical novelty exceeds the configured threshold |
+| `both` | both gates failed; also used when the live service has no candidates |
 
 * **margin** — `(s1−s2)/(|s1|+|s2|)`, the scale-free gap between the two highest scores, in `[0, 1]`.
 * **novelty** — `1 − k'(XX'+λI)⁻¹k`, the ridge leverage on the lexical
   subspace, in `[0, 1]`.
 
-The two are correlated at r ≈ −0.7 but fail on different inputs: a
-confidently-wrong routing needs the novelty gate, a familiar-but-wrong one
-needs the margin gate. `min_margin` and `min_novelty` are dataset-specific
-and are not calibrated defaults.
+The gates measure different properties and can still accept a wrong answer.
+Choose `min_margin` and `min_novelty` using held-out examples from your own
+data. Their defaults are starting values, not calibrated guarantees.
 
 ### `GET /v1/novelty?text=...`
 

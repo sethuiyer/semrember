@@ -11,9 +11,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: crystal-lang/install-crystal@v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Build
         run: make all fetch-model
       - name: Test
         run: make test
       - name: HTTP smoke test
         run: make smoke
+      - name: Install Python client from checkout
+        run: |
+          python3 -m venv build/client-venv
+          build/client-venv/bin/python -m pip install ./clients/python
+      - name: Developer quickstart and persistence examples
+        run: make dx-smoke DX_PYTHON="$PWD/build/client-venv/bin/python"
