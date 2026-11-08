@@ -69,7 +69,10 @@ The format stores a model, not a training set:
   loaded model cannot accept exact writes;
 * **pumping or repetition observations**;
 * **the static embedding model** — `D_static` records only its dimension,
-  and the file must be opened with a matching encoder.
+  and the file must be opened with a matching-dimension encoder. A missing,
+  extra, or wrong-dimension encoder is rejected. AMEM v3 cannot identify
+  different encoders with the same dimension; callers must use the original
+  encoder model.
 
 A model loaded from disk is therefore a **reader**. Continuing to train
 requires the original corpus.

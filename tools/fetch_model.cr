@@ -27,7 +27,7 @@ require "../src/semrember"
 module FetchModel
   extend self
 
-  HF        = "https://huggingface.co"
+  HF         = "https://huggingface.co"
   HF_RESOLVE = "https://huggingface.co/{repo}/resolve/main/{file}"
 
   record Spec,
@@ -210,8 +210,12 @@ module FetchModel
     unless tensor.dtype == "F32"
       raise "unexpected embedding dtype #{tensor.dtype} (only F32 is supported)"
     end
+    raise "expected a two-dimensional embedding tensor" unless tensor.shape.size == 2
     v = tensor.shape[0]
     d = tensor.shape[1]
+    unless v > 0 && d > 0 && tensor.start >= 0 && tensor.stop - tensor.start == v * d * 4
+      raise "invalid embedding tensor shape or byte length"
+    end
     unless vocab.tokens.size == v
       raise "vocab (#{vocab.tokens.size}) and embedding rows (#{v}) disagree"
     end
@@ -249,7 +253,7 @@ module FetchModel
         buf = Bytes.new(4)
         while remaining > 0
           n = {remaining, 4_i64}.min.to_i32
-          f.read(buf[0, n])
+          f.read_fully(buf[0, n])
           value = IO::ByteFormat::LittleEndian.decode(Float32, buf[0, n])
           w.write(Semrember::Codec.u16(Semrember::F16.from_f32(value)))
           remaining -= n
@@ -286,7 +290,7 @@ module FetchModel
           puts "#{s.name.ljust(14)} #{s.repo}  ->  #{s.file}  [#{s.kind}]"
         end
         return 0
-      when "--out"  then out_dir = argv[i + 1]; i += 2
+      when "--out"   then out_dir = argv[i + 1]; i += 2
       when "--force" then force = true; i += 1
       else
         name = argv[i]

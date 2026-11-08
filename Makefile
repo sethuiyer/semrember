@@ -1,7 +1,9 @@
 CRYSTAL ?= crystal
+SHARDS ?= shards
+CRYSTAL_FLAGS ?= --release
 BUILD   ?= build
 
-.PHONY: all cli server spec test parity bench models models-base models-multilingual clean
+.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke
 
 all: cli server
 
@@ -9,12 +11,18 @@ $(BUILD):
 	mkdir -p $(BUILD)
 
 cli: | $(BUILD)
-	$(CRYSTAL) build --release src/cli.cr -o $(BUILD)/semrember
+	$(CRYSTAL) build $(CRYSTAL_FLAGS) src/cli.cr -o $(BUILD)/semrember
 
-server: | $(BUILD)
-	$(CRYSTAL) build --release src/server.cr -o $(BUILD)/semrember-server
+deps: lib/.semrember-deps
 
-spec:
+lib/.semrember-deps: shard.yml shard.lock
+	$(SHARDS) install --frozen
+	touch $@
+
+server: deps | $(BUILD)
+	$(CRYSTAL) build $(CRYSTAL_FLAGS) src/server_cli.cr -o $(BUILD)/semrember-server
+
+spec: deps
 	$(CRYSTAL) spec
 
 # Maintainer tool.  Compares this implementation against the reference
@@ -28,6 +36,10 @@ parity: cli
 
 # `test` is what ships: no reference implementation required.
 test: spec
+	python3 -m unittest discover -s clients/python -p 'test_*.py'
+
+smoke:
+	python3 tools/http_smoke.py --server $(BUILD)/semrember-server --cli $(BUILD)/semrember
 
 bench: cli
 	AMEM=$(AMEM) $(CRYSTAL) run --release tools/bench.cr
@@ -38,7 +50,7 @@ bench: cli
 MODELS_DIR ?= models
 
 fetch-model: | $(BUILD)
-	$(CRYSTAL) build --release tools/fetch_model.cr -o $(BUILD)/fetch-model
+	$(CRYSTAL) build $(CRYSTAL_FLAGS) tools/fetch_model.cr -o $(BUILD)/fetch-model
 
 models: models-multilingual
 

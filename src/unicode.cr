@@ -39,7 +39,7 @@ module Semrember
 
     # Full lowercase mapping; may yield up to three codepoints.
     def lower_cp(cp : Int32) : Array(UInt32)
-      LOWER[cp.to_u32]? || [cp.to_u32]
+      LOWER[cp.to_u32]?.try(&.dup) || [cp.to_u32]
     end
 
     def is_mn(cp : Int32) : Bool
@@ -111,7 +111,7 @@ module Semrember
               break unless is_case_ignorable(nxt)
               j += 1
             end
-            final_sigma = !is_cased(nxt)
+            final_sigma = j == cps.size || !is_cased(nxt)
           end
           before_cased = is_cased(cp) unless is_case_ignorable(cp)
           low = lower_cp(cp)
@@ -166,30 +166,30 @@ module Semrember
     # whitespace, and isolate punctuation.
     def sp_normalize(text : String) : String
       buf = String.build(text.bytesize * 2) do |io|
-      last_space = true
-      text.unicode_normalize(:nfkc).each_codepoint do |cp|
-        next if is_control(cp)
-        if is_space(cp)
-          unless last_space
+        last_space = true
+        text.unicode_normalize(:nfkc).each_codepoint do |cp|
+          next if is_control(cp)
+          if is_space(cp)
+            unless last_space
+              io << ' '
+              last_space = true
+            end
+            next
+          end
+          # SentencePiece isolates ASCII punctuation only — not all Unicode
+          # punctuation.  This matches the reference implementation exactly.
+          if ascii_punct(cp)
+            unless last_space
+              io << ' '
+            end
+            io << cp.chr
             io << ' '
             last_space = true
-          end
-          next
-        end
-        # SentencePiece isolates ASCII punctuation only — not all Unicode
-        # punctuation.  This matches the reference implementation exactly.
-        if ascii_punct(cp)
-          unless last_space
-            io << ' '
+            next
           end
           io << cp.chr
-          io << ' '
-          last_space = true
-          next
+          last_space = false
         end
-        io << cp.chr
-        last_space = false
-      end
       end
       buf.strip
     end

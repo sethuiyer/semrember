@@ -3,14 +3,15 @@
 A compressed associative memory in Crystal: text → a learned label matrix,
 read with one matrix-vector product.
 
-* **One binary, no runtime dependencies.** C11 + libc is the floor; Crystal
-  compiles to a single static executable.
+* **One compiled service binary.** Kemal is compiled into the HTTP service;
+  it needs no separate framework installation at runtime. The default build
+  uses system libraries; static linking is optional.
 * **Exact, not approximate.** The dual writer gives a *hard* replacement: a
   key maps to one value, and overwriting it replaces the value rather than
   quietly adding a second observation.
-* **A Redis-shaped API, with a semantic layer Redis does not have.** The
-  exact operations (`GET`, `SET`, `DELETE`, `EXISTS`, `SCAN`) never invoke
-  the model. The semantic operations (`SIMILAR`, `ESCALATE`, `NOVELTY`)
+* **A Redis-shaped API, with a semantic layer Redis does not have.** Exact
+  reads (`GET`, `EXISTS`, `SCAN`) return dictionary data. Writes maintain
+  the semantic index. The semantic operations (`SIMILAR`, `ESCALATE`, `NOVELTY`)
   always return candidates and confidence, never a bare answer.
 * **The file format is the contract.** `AMEM` v3 is documented in
   [`FORMAT.md`](FORMAT.md) and versioned: anything that reads and writes
@@ -26,11 +27,18 @@ key → repr() → [TF-IDF byte n-grams ‖ static embedding] → joint L2
 ## Build
 
 ```bash
-make            # builds build/semrember and build/semrember-server
-make test       # 20 examples
+make            # installs locked shards, builds CLI and Kemal service
+make test       # Crystal regressions and Python client tests
+make smoke      # compiled Kemal service over real HTTP
 ```
 
-Nothing else is needed: no shards, no C libraries, no runtime packages.
+The engine and CLI need no shards or Python packages. The HTTP service
+uses Kemal 1.15.0, pinned with its transitive dependencies in `shard.lock`.
+`make` installs them using Shards. The build needs Crystal >= 1.12, Shards,
+and the system toolchain/libraries. For a fully static executable,
+use `make CRYSTAL_FLAGS="--release --static"` on a platform with the required
+static libraries (for example a musl toolchain). Python 3 is used by the
+client tests.
 
 ## Quickstart
 
@@ -69,7 +77,7 @@ for cand in kb.similar("disk full", top_k=3):
     print(cand["key"], cand["value"], cand["score"])
 
 d = kb.escalate("ImagePullBackOff")
-# {"decision": "escalate", "reason": "both", "margin": -0.646, "novelty": 0.734, ...}
+# {"decision": "escalate", "reason": "both", "margin": 0.1, "novelty": 0.734, ...}
 ```
 
 See `clients/python/semrember_client.py`.
@@ -101,6 +109,17 @@ build/semrember tokens models/potion-base-8M.bin "hello world"
 
 ---
 
+## Kemal HTTP service
+
+Kemal provides the versioned route table, HTTP middleware, request logging,
+HEAD responses, and graceful termination. The listener still defaults to
+`127.0.0.1:7379`; static-file serving and development exception pages are
+disabled. Framework errors and application errors both return JSON.
+The command-line options are parsed once by semrember and passed to Kemal.
+
+`src/semrember.cr` remains independent of Kemal; importing the memory engine
+or building only the CLI does not require installing framework shards.
+
 ## The API, and why it is split
 
 Two families of operation, and the split is the point.
@@ -108,7 +127,7 @@ Two families of operation, and the split is the point.
 | | exact | semantic |
 |---|---|---|
 | endpoints | `GET` `PUT` `DELETE` `EXISTS` `SCAN` `EXPIRE` `TTL` | `SIMILAR` `ESCALATE` `NOVELTY` |
-| touches the model? | **never** | yes |
+| uses model scores for answers? | **never**; writes update its index | yes |
 | returns | the stored value, or 404 | candidates, scores, confidence |
 | failure mode | absent key | ambiguous vs out-of-domain, named |
 
@@ -153,9 +172,16 @@ A₋ᵢ = A + u uᵀ / t,     t = 1 − xᵢᵀ A xᵢ
 ```
 
 is a rank-1 downdate, so removing or replacing one observation is algebra
-rather than a retrain. That single identity is what makes a key-value store
-on top of this model honest, and it is what `semrember.prune` certifies
-decisions with.
+rather than treating a replacement as a second observation. This port
+uses a rank-1 target update for replacement and a Schur-complement update
+for insertion. Deletion rebuilds the solution from retained observations.
+Attribution, counterfactual previews, and pruning APIs are not implemented
+in this port.
+
+The update is exact for the regularized ridge objective; classification
+is still a learned prediction and can be affected by feature collisions.
+Only the dictionary GET guarantees the exact stored value. Key identity
+is case-sensitive even though lexical features are lowercased.
 
 ## Static embeddings (optional)
 
@@ -281,11 +307,12 @@ src/codec.cr            little-endian primitives
 src/unicode.cr          normalization shared with the C implementation
 src/unicode_tables.cr   generated — do not edit
 src/tokenizer.cr        WordPiece and SentencePiece-Unigram
-src/static_encoder.cr   mmap-style encoder for the static models
-src/server.cr           the HTTP/JSON service
+src/static_encoder.cr   in-memory encoder for the static models
+src/server.cr           the Kemal routes and HTTP/JSON service
+src/server_cli.cr       the service executable entry point
 src/cli.cr              the command line front end
 src/csv.cr              RFC 4180 reader
-spec/                   17 examples
+spec/                   engine, tokenizer, persistence and HTTP regressions
 clients/python/         the Python client
 tools/                  table generator, model fetcher, parity harness, benchmark
 ```
@@ -302,6 +329,11 @@ and versioned; a newer format is rejected rather than misread.
   vocabulary, not the training set. So a model loaded from disk can
   classify, but cannot compute similarity or novelty — those need the live
   observations. The server's `--train` mode keeps them; `--model` does not.
+* **An empty live dual writer bootstraps on its first write.** After
+  deleting its last key, it can bootstrap again. Loaded AMEM readers cannot
+  accept semantic updates: service writes report `semantic_updated: false`,
+  and semantic endpoints return HTTP 409 until the service is started with
+  the original corpus using `--train`.
 * **The vocabulary is fixed at fit time.** A new observation cannot
   introduce new n-grams; a refit changes every encoding.
 * **Capacity is bounded by the feature dimension**, roughly `D`. Past that

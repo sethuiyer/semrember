@@ -69,12 +69,6 @@ module Semrember
     def encode(text : String) : Array(Int32)
       ids = [] of Int32
       normalized = Unicode.bert_normalize(text)
-      normalized.each_char do |ch|
-        if Unicode.is_cjk(ch.ord)
-          ids.concat(piece([ch]))
-          next
-        end
-      end
       # Split on whitespace, then isolate punctuation inside each word.
       normalized.split(/[\s]+/).each do |word|
         next if word.empty?

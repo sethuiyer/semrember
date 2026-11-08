@@ -60,7 +60,7 @@ def main() -> int:
     ap.add_argument("--python-root", default=str(ROOT.parent),
                     help="directory containing a reference implementation to compare against")
     ap.add_argument("--static", default=None, help="static encoder for the semantic half")
-    ap.add_argument("--corpus", default=str(ROOT.parent / "examples/incidents.csv"))
+    ap.add_argument("--corpus", default=str(ROOT / "examples/incidents.csv"))
     args = ap.parse_args()
 
     sys.path.insert(0, args.python_root)

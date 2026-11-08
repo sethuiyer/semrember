@@ -1,6 +1,7 @@
 # semrember service API
 
-Version `v1`. Transport is HTTP+JSON; every response is a JSON object.
+Version `v1`. Kemal serves the HTTP+JSON API; every response is a JSON object
+(except HEAD responses, which have no body).
 Errors carry a non-2xx status and an `error` string.
 
 The command names are borrowed from Redis so the concepts transfer. The
@@ -10,7 +11,8 @@ protocol is not RESP and does not claim Redis compatibility.
 
 ## Exact operations
 
-These never invoke the model. A `GET` is a hash lookup: it cannot be
+Reads return dictionary values. Writes also update the live semantic index.
+A `GET` is a hash lookup: it cannot be
 changed by a retrain, a correction, or a threshold.
 
 ### `GET /v1/kv/{key}`
@@ -20,17 +22,24 @@ changed by a retrain, a correction, or a threshold.
 ```
 
 `404` with `{"error": "not found"}` when the key is absent. Keys are
-percent-decoded; a key may contain any byte sequence.
+percent-decoded. Percent-encode the entire key as one path segment,
+including `/` as `%2F`. This distinguishes a literal key such as
+`a%2Fexists` from the EXISTS operation at `a/exists`. JSON string keys
+and values must be valid UTF-8.
 
 ### `PUT /v1/kv/{key}`
 
 Body: `{"value": "free_disk"}`
 
 ```json
-{"ok": true, "previous": "free_disk"}
+{"ok": true, "previous": "free_disk", "semantic_updated": true}
 ```
 
-`previous` is `null` for a new key. Replacing a key **replaces** its value:
+`previous` is `null` for a new key. Key identity is case-sensitive.
+The first write into an empty live service bootstraps its vocabulary.
+`semantic_updated` is false for a service started with an AMEM reader;
+exact writes still work, but no background semantic catch-up occurs.
+Replacing a key in a live dual writer **replaces** its value:
 the model is updated with an exact rank-1 overwrite, so neighbouring
 records move as little as the algebra allows. It does not add a second
 observation for the same key.
@@ -58,7 +67,9 @@ A deterministic scan over sorted keys.
 ```
 
 `cursor` is `"0"` when the scan is complete. `match` accepts `*` and `?`
-wildcards. `count` bounds the page size (default 100).
+wildcards over Unicode characters, matching the entire key. `count`
+bounds the page size (1–10000, default 100). An exhausted or oversized
+cursor returns an empty page and cursor `"0"`; negative cursors are rejected.
 
 ### `POST /v1/kv/{key}/expire`
 
@@ -74,7 +85,10 @@ Body: `{"seconds": 60}`
 {"ttl": 59}
 ```
 
-`ttl` is `null` when the key has no expiry or does not exist.
+`ttl` is `null` when the key has no expiry or does not exist. Expiry is
+applied lazily before exact and semantic reads and removes both the
+record and its live semantic observation. Expired records cannot be
+revived by EXPIRE.
 
 ---
 
@@ -123,7 +137,7 @@ Two independent gates decide, and `reason` names which one fired:
 | `out_of_domain` | nothing stored resembles this — the taxonomy has a gap |
 | `both` | unfamiliar *and* ambiguous |
 
-* **margin** — `(s1−s2)/(|s1|+|s2|)`, the scale-free top-2 gap, in `[-1, 1]`.
+* **margin** — `(s1−s2)/(|s1|+|s2|)`, the scale-free gap between the two highest scores, in `[0, 1]`.
 * **novelty** — `1 − k'(XX'+λI)⁻¹k`, the ridge leverage on the lexical
   subspace, in `[0, 1]`.
 
@@ -139,6 +153,12 @@ and are not calibrated defaults.
 ```
 
 ---
+
+Malformed JSON, missing required string fields and invalid limits return
+HTTP 400. A loaded AMEM reader has no observations, so SIMILAR, ESCALATE
+and NOVELTY return HTTP 409. An empty live service returns no candidates,
+novelty 1, and an escalation decision. The novelty inverse is cached until
+observations change; the first query after a change still builds it.
 
 ## Server
 
@@ -159,6 +179,8 @@ and are not calibrated defaults.
   "d_tfidf": 2127,
   "d_static": 0,
   "solver": "dual",
+  "semantic_updates": true,
+  "semantic_reads": true,
   "exact_endpoints": ["GET", "PUT", "DELETE", "EXISTS", "SCAN"],
   "semantic_endpoints": ["SIMILAR", "ESCALATE", "NOVELTY"]
 }
@@ -170,7 +192,8 @@ and are not calibrated defaults.
 
 The service is **in-memory**. Records live in the process; there is no
 write-ahead log, no persistence, and no replication. Restarting loses
-everything that was not written to a model file.
+the exact records. A model file preserves classification weights, not the
+records or writer state.
 
 Within a single process:
 
@@ -183,9 +206,18 @@ Within a single process:
 That last point is the important one: if the model cannot accept a write —
 for example a model loaded from disk, whose writer state was dropped — the
 exact record store still holds the value, and `GET` still returns it. The
-model catches up when it can.
+response reports `semantic_updated: false`; the model does not catch up
+automatically. Restart with `--train` and the original corpus to build a
+live semantic index. Unexpected live-writer failures are returned as errors
+before publishing the new record value.
 
 ## Deployment
+
+The service uses Kemal 1.15.0. Static-file serving is disabled, framework
+errors use the same JSON error envelope, and GET routes support HEAD.
+SIGTERM/SIGINT stops accepting new connections and lets Kemal drain
+in-flight requests before exiting. The memory engine itself has no Kemal
+dependency.
 
 ```bash
 semrember-server --train corpus.csv --key message --value action

@@ -71,7 +71,8 @@ module Semrember
           solver = case argv[6]
                    when "delta" then :delta
                    when "rls"   then :rls
-                   else              :dual
+                   when "dual"  then :dual
+                   else              raise ArgumentError.new("solver must be delta, rls or dual")
                    end
         end
         mem = Memory.new(solver: solver, min_df: min_df, static: static)
