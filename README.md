@@ -1,349 +1,120 @@
 # semrember
 
-A compressed associative memory in Crystal: text → a learned label matrix,
-read with one matrix-vector product.
+Semrember learns **text → label** associations and serves them through a local
+HTTP API. It combines byte n-gram TF-IDF, optional static embeddings, and a
+ridge-regression writer. Use it to suggest an incident action, classify an
+intent, or retrieve related examples from your own corpus.
 
-* **One compiled service binary.** Kemal is compiled into the HTTP service;
-  it needs no separate framework installation at runtime. The default build
-  uses system libraries; static linking is optional.
-* **Exact, not approximate.** The dual writer gives a *hard* replacement: a
-  key maps to one value, and overwriting it replaces the value rather than
-  quietly adding a second observation.
-* **A Redis-shaped API, with a semantic layer Redis does not have.** Exact
-  reads (`GET`, `EXISTS`, `SCAN`) return dictionary data. Writes maintain
-  the semantic index. The semantic operations (`SIMILAR`, `ESCALATE`, `NOVELTY`)
-  always return candidates and confidence, never a bare answer.
-* **The file format is the contract.** `AMEM` v3 is documented in
-  [`FORMAT.md`](FORMAT.md) and versioned: anything that reads and writes
-  those bytes produces and consumes the same models.
+It provides three different behaviors:
 
-```
-key → repr() → [TF-IDF byte n-grams ‖ static embedding] → joint L2
-              → W @ q → argmax label
-```
+| Operation | What you get |
+|---|---|
+| Exact `GET` | The stored string for exactly that key |
+| `SIMILAR` | Related stored keys, their values, and similarity scores |
+| `ESCALATE` | A suggested label or an escalation decision, with scores and reasons |
 
----
+A learned prediction can be wrong. Scores are not probabilities. Semrember
+does not generate answers or reconstruct arbitrary documents from its weights.
 
-## Build
+## Install
+
+Requires Crystal >= 1.12, Shards, Git, Make, and the system C toolchain/libraries.
+Follow the [Crystal installation guide](https://crystal-lang.org/install/) for
+your platform, then run:
 
 ```bash
-make            # installs locked shards, builds CLI and Kemal service
-make test       # Crystal regressions and Python client tests
-make smoke      # compiled Kemal service over real HTTP
+git clone https://github.com/sethuiyer/semrember.git
+cd semrember
+make install
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The engine and CLI need no shards or Python packages. The HTTP service
-uses Kemal 1.15.0, pinned with its transitive dependencies in `shard.lock`.
-`make` installs them using Shards. The build needs Crystal >= 1.12, Shards,
-and the system toolchain/libraries. For a fully static executable,
-use `make CRYSTAL_FLAGS="--release --static"` on a platform with the required
-static libraries (for example a musl toolchain). Python 3 is used by the
-client tests.
+This builds the CLI and Kemal service, and installs them to `~/.local/bin`.
+Use `make install PREFIX=/your/prefix` to choose another destination.
+No model download is needed for the default lexical mode.
 
-## Quickstart
+See [installation and troubleshooting](docs/INSTALLATION.md) for prerequisites,
+build-only use, the Python client, and optional embeddings.
 
-### As a service
+## Five-minute quickstart
+
+After installation, start a live service from the included examples:
 
 ```bash
-build/semrember-server --train examples/incidents.csv --key message --value action
-# semrember 1.0.0 listening on http://127.0.0.1:7379
+semrember-server --train examples/incidents.csv --key message --value action
 ```
+
+In another terminal:
 
 ```bash
-curl localhost:7379/v1/kv/"No%20space%20left%20on%20device"
-# {"key":"No space left on device","value":"free_disk"}
+curl -fsS http://127.0.0.1:7379/v1/ping
 
-curl -X POST localhost:7379/v1/similar \
-     -H 'Content-Type: application/json' \
-     -d '{"text":"disk full","top_k":3}'
-# {"candidates":[{"key":"filesystem is full","value":"free_disk","score":0.346}, ...]}
+curl -fsS http://127.0.0.1:7379/v1/escalate \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"certificate has expired"}'
 ```
 
-### From Python
+The second response should have `handled: true` and
+`action: "renew_certificate"`. No LLM API key is required.
 
-The client is standard library only — no `requests`, no `redis-py`, no numpy.
+Follow the [full five-minute walkthrough](docs/QUICKSTART.md) to try exact
+reads, similarity, an overwrite, and the Python client. Initial toolchain
+installation and compilation can take longer than the walkthrough.
 
-```python
-from semrember_client import Semrember
+## Use from your application
 
-kb = Semrember("http://127.0.0.1:7379")
+| Interface | Start here |
+|---|---|
+| HTTP / curl | [API reference](API.md) and [API examples](docs/EXAMPLES.md) |
+| Python 3.10+ | `python -m pip install ./clients/python`, then [runnable example](examples/quickstart.py) |
+| JavaScript (Node.js >= 18) | [Runnable example](examples/quickstart.mjs), using built-in `fetch` |
+| Crystal library | [Runnable example](examples/quickstart.cr), with no HTTP or Kemal dependency |
+| Offline CLI | [Save and query a model](docs/MEMORY.md#save-a-classification-reader) |
 
-kb.set("No space left on device", "free_disk")   # -> previous value
-kb.get("No space left on device")                # -> "free_disk"
-kb.exists("No space left on device")             # -> True
-kb.delete("No space left on device")             # -> True
+The Python install command uses this checkout. There is no hosted-package
+installation or prebuilt-binary release assumed by these instructions.
 
-for cand in kb.similar("disk full", top_k=3):
-    print(cand["key"], cand["value"], cand["score"])
+## Understand the memory before integrating
 
-d = kb.escalate("ImagePullBackOff")
-# {"decision": "escalate", "reason": "both", "margin": 0.1, "novelty": 0.734, ...}
-```
+**The live record dictionary and a saved model are different things.**
 
-See `clients/python/semrember_client.py`.
+- A running `--train` service keeps exact records and live observations.
+- An AMEM file saves vocabulary, IDF, labels, and float16 prediction weights.
+- AMEM does **not** save record keys, TTLs, training observations, or writer state.
+- Restarting the service loses in-memory writes. There is no HTTP save endpoint.
+- A `--model` service starts with an empty exact store. Its writes report
+  `semantic_updated: false`; similarity, novelty, and escalation return HTTP 409.
+- Vocabulary is fixed after fitting. New keys can update weights only through
+  existing features. Refit from a representative corpus to expand vocabulary.
 
-### As a library
+Read [what it can remember and how persistence works](docs/MEMORY.md) before
+using it as a cache, router, or long-running service. Keep durable source records
+in your application if they must survive a restart.
 
-```crystal
-require "./src/semrember"
-
-mem = Semrember::Memory.new(solver: :dual)
-mem.fit({"No space left on device" => "free_disk",
-         "could not resolve host api" => "fix_dns"})
-
-mem.query("disk full")            # => [{"free_disk", 0.42}]
-mem.set("disk full", "clear_cache")   # exact replacement
-mem.similar("no space left", 3)  # nearest stored keys
-mem.novelty("zqxwvbnmwk")         # => 0.93  (out of distribution)
-mem.save("brain.amem")
-```
-
-### As a CLI
+## Develop and verify
 
 ```bash
-build/semrember train data.csv message action brain.amem 1 dual
-build/semrember query brain.amem "no space left on device" 3
-build/semrember scores brain.amem "no space left on device"   # JSON, all labels
-build/semrember tokens models/potion-base-8M.bin "hello world"
+make all
+make test
+make smoke
 ```
 
----
+For the executable documentation checks, also install the Python client and
+Node.js, then follow [the example-check instructions](docs/EXAMPLES.md#verify-the-examples).
+CI checks the examples, installation target, and persistence behavior.
 
-## Kemal HTTP service
+## Further reading
 
-Kemal provides the versioned route table, HTTP middleware, request logging,
-HEAD responses, and graceful termination. The listener still defaults to
-`127.0.0.1:7379`; static-file serving and development exception pages are
-disabled. Framework errors and application errors both return JSON.
-The command-line options are parsed once by semrember and passed to Kemal.
+- [Installation](docs/INSTALLATION.md)
+- [Five-minute quickstart](docs/QUICKSTART.md)
+- [API examples](docs/EXAMPLES.md)
+- [Memory and persistence](docs/MEMORY.md)
+- [HTTP API contract](API.md)
+- [Optional static embedding models](MODELS.md)
+- [Engine design and historical measurements](docs/DESIGN.md)
+- [AMEM v3 binary format](FORMAT.md)
 
-`src/semrember.cr` remains independent of Kemal; importing the memory engine
-or building only the CLI does not require installing framework shards.
+The service binds to `127.0.0.1:7379` by default and has no authentication.
+For deployment details, see [the API deployment notes](API.md#deployment).
 
-## The API, and why it is split
-
-Two families of operation, and the split is the point.
-
-| | exact | semantic |
-|---|---|---|
-| endpoints | `GET` `PUT` `DELETE` `EXISTS` `SCAN` `EXPIRE` `TTL` | `SIMILAR` `ESCALATE` `NOVELTY` |
-| uses model scores for answers? | **never**; writes update its index | yes |
-| returns | the stored value, or 404 | candidates, scores, confidence |
-| failure mode | absent key | ambiguous vs out-of-domain, named |
-
-`GET` is a hash lookup. It does not consult the weights, so it cannot be
-changed by a retrain, a correction, or a threshold. That is what makes it
-safe to build a cache on top of it.
-
-`ESCALATE` is the part Redis has no equivalent for. It applies **two
-independent gates** and names which one fired:
-
-```json
-{"decision": "escalate", "reason": "out_of_domain",
- "margin": 0.986, "novelty": 0.734,
- "candidates": [{"label": "free_disk", "score": 0.95}, ...]}
-```
-
-* **margin** — `(s1−s2)/(|s1|+|s2|)`, the scale-free top-2 gap. Catches
-  *ambiguity*: the input is in the taxonomy but two actions are close.
-* **novelty** — `1 − k'(XX'+λI)⁻¹k`, the ridge leverage on the lexical
-  subspace. Catches *out-of-domain*: nothing stored resembles this input.
-
-They are correlated at r ≈ −0.7, yet they fail on **different** inputs: a
-confidently-wrong routing needs the novelty gate, and a familiar-but-wrong
-one needs the margin gate. A single threshold conflates two different
-reasons to escalate, and the reasons call for different people.
-
-Full contract: [`API.md`](API.md).
-
-## The writers
-
-| solver | state | semantics |
-|---|---|---|
-| `delta` | `W` | iterative sweeps; the large-`D` fallback |
-| `rls` | `P` (`D×D`) | exact ridge, recursive least squares |
-| `dual` | `A` (`N×N`) | the same exact ridge solution in the kernel dual |
-
-`dual` is the default because it is cheaper whenever `N < D` — the regime
-this library targets — and because it supports **exact replacement**:
-
-```
-A₋ᵢ = A + u uᵀ / t,     t = 1 − xᵢᵀ A xᵢ
-```
-
-is a rank-1 downdate, so removing or replacing one observation is algebra
-rather than treating a replacement as a second observation. This port
-uses a rank-1 target update for replacement and a Schur-complement update
-for insertion. Deletion rebuilds the solution from retained observations.
-Attribution, counterfactual previews, and pruning APIs are not implemented
-in this port.
-
-The update is exact for the regularized ridge objective; classification
-is still a learned prediction and can be affected by feature collisions.
-Only the dictionary GET guarantees the exact stored value. Key identity
-is case-sensitive even though lexical features are lowercased.
-
-## Static embeddings (optional)
-
-The static half of the feature map is a static embedding model, extracted
-once from [model2vec](https://github.com/MinishLab/model2vec) into a tiny
-dependency-free binary that the runtime reads:
-
-```bash
-make models-base          # or: make models-multilingual
-```
-
-That downloads from the Hugging Face hub and converts to semrember's own
-binary format, in Crystal, verifying the result against a published
-checksum. It is idempotent: if the file is present and its checksum
-matches, nothing happens.
-
-The encoder is **optional**. Without it semrember uses the TF-IDF byte
-n-gram half alone: no encoder file, no download, no dependency — the
-"floppy disk" mode, and the reason the library can be 68 KB next to a
-2 MB binary.
-
-The two halves behave differently, and the difference is the design
-constraint the whole API is built around:
-
-| | lexical (TF-IDF) | static (embeddings) |
-|---|---|---|
-| typos | survives | usually survives |
-| paraphrase | misses | survives |
-| out-of-distribution detection | **works** | **fails** |
-
-That last row is why the novelty score is measured on the lexical half
-alone: a static encoder will happily place nonsense next to a real
-sentence, so including it collapses the separation between "unfamiliar"
-and "out of distribution". With the static encoder present, it buys
-paraphrase tolerance and pays for it in over-confidence — the novelty gate
-is the counterweight.
-
-See [`MODELS.md`](MODELS.md) for the sources, the extraction, and the
-footprint.
-
-## Cross-implementation parity
-
-`AMEM` is meant to be a portable interchange format, so this implementation
-is checked against an independent one on three axes that must agree:
-
-```
-1. AMEM bytes   a model written by one is byte-identical to the other's
-2. Scores       the same model and query give the same numbers
-3. Token ids    the static encoder segments text identically
-```
-
-Measured on the 42-signature incident corpus:
-
-| | lexical | base-8M | multilingual-128M |
-|---|---|---|---|
-| AMEM bytes identical | **yes** | 1 of 21,270 float16 weights differs by 1 ULP | 2 of 21,270 differ by 1 ULP |
-| score agreement | 8.1e-07 | 5.8e-07 | 9.3e-07 |
-| token ids identical | — | **yes** (WordPiece) | **yes** (SentencePiece Unigram + Viterbi) |
-| cross-load both ways | **yes** | **yes** | **yes** |
-
-The token-id check covers the awkward cases — Greek final sigma, combining
-marks, Devanagari, CJK, and punctuation isolation — because those are
-exactly where two independent implementations of the same tokenizer drift
-apart.
-
-The one differing weight is a float16 rounding boundary: the two
-implementations accumulate the static encoder's normalisation sum in a
-different order, which is worth ~1e-7 relative, which lands on the wrong
-side of a rounding tie for one value in ten thousand.
-
-The harness that produces these numbers is `tools/parity.py`. It is a
-**maintainer tool**: it compares against a reference implementation that is
-not part of this repository, so a public checkout cannot reproduce it. It is
-kept here because a conformance claim is only worth something if the check
-that backs it is visible:
-
-```bash
-python3 tools/parity.py --python-root ../ --static models/potion-base-8M.bin
-```
-
-Matching the reference bit-for-bit required reproducing two details that are
-easy to get wrong and impossible to guess:
-
-* **the contextual final-sigma rule** — Python's `str.lower()` maps `"ΣΣ"` to
-  `"σς"`; a codepoint-wise mapping gives `"σσ"`. Crystal's `String#downcase`
-  is codepoint-wise, so the rule is implemented explicitly here, using the
-  same cased and case-ignorable tables the C library uses.
-* **the type flow of the arithmetic** — the reference keeps the static vector
-  in float64 until the caller casts it, and computes the joint norm over
-  that float64 value. Rounding the norm early propagates into every
-  weight.
-
-The Unicode tables are generated from the C implementation
-(`tools/gen_unicode_tables.py`) rather than re-derived, so the two agree by
-construction rather than by luck.
-
-## Performance and footprint
-
-Measured on this machine, in-process, after load:
-
-| | Crystal | Python reference |
-|---|---:|---:|
-| query (lexical, `d=2127`) | **2.1 µs** | 11.4 µs |
-| `semrember` CLI | 2.2 MB | — |
-| `semrember-server` | 4.3 MB | — |
-| 42-signature brain (`AMEM`) | 68 KB | 68 KB |
-| base-8M encoder: load / resident | 0.01 s / 20 MB | 0.39 s / 115 MB (mmap) |
-| multilingual-128M encoder: load / resident | 0.27 s / 327 MB | 0.39 s / 115 MB (mmap) |
-
-The Crystal encoder *reads* the model; the C library *memory-maps* it,
-which is why the 253 MB multilingual model costs 327 MB here and 115 MB
-there. If resident memory matters more than the last millisecond of load
-time, use the 15 MB model or the C library.
-
-The engine is ~2,800 lines of Crystal plus ~2,600 generated table lines;
-the whole public repository is under 4,000 hand-written lines.
-
-## Repository layout
-
-```
-src/semrember.cr        the engine: features, writers, AMEM I/O
-src/codec.cr            little-endian primitives
-src/unicode.cr          normalization shared with the C implementation
-src/unicode_tables.cr   generated — do not edit
-src/tokenizer.cr        WordPiece and SentencePiece-Unigram
-src/static_encoder.cr   in-memory encoder for the static models
-src/server.cr           the Kemal routes and HTTP/JSON service
-src/server_cli.cr       the service executable entry point
-src/cli.cr              the command line front end
-src/csv.cr              RFC 4180 reader
-spec/                   engine, tokenizer, persistence and HTTP regressions
-clients/python/         the Python client
-tools/                  table generator, model fetcher, parity harness, benchmark
-```
-
-## Format
-
-The on-disk format is `AMEM` v3 — see [`FORMAT.md`](FORMAT.md). Files are
-little-endian, portable between the Crystal, Python and C implementations,
-and versioned; a newer format is rejected rather than misread.
-
-## Limitations
-
-* **A loaded model has no training keys.** `AMEM` stores weights and
-  vocabulary, not the training set. So a model loaded from disk can
-  classify, but cannot compute similarity or novelty — those need the live
-  observations. The server's `--train` mode keeps them; `--model` does not.
-* **An empty live dual writer bootstraps on its first write.** After
-  deleting its last key, it can bootstrap again. Loaded AMEM readers cannot
-  accept semantic updates: service writes report `semantic_updated: false`,
-  and semantic endpoints return HTTP 409 until the service is started with
-  the original corpus using `--train`.
-* **The vocabulary is fixed at fit time.** A new observation cannot
-  introduce new n-grams; a refit changes every encoding.
-* **Capacity is bounded by the feature dimension**, roughly `D`. Past that
-  the matrix saturates and predictions interfere.
-* **Redis compatibility is a mental model, not a wire protocol.** The
-  transport is HTTP+JSON and the command names are borrowed so the concepts
-  transfer. This is not the RESP protocol and does not claim to be.
-* **This is a first responder, not an autopilot.** The semantic layer
-  returns candidates and confidence; the caller decides.
-
-## License
-
-MIT.
+MIT license. Optional embedding models have their own terms; see [MODELS.md](MODELS.md).

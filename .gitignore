@@ -12,6 +12,10 @@
 # Python
 __pycache__/
 *.pyc
+*.egg-info/
+.venv/
+/clients/python/build/
+/clients/python/dist/
 
 # models are large and are fetched separately
 *.bin

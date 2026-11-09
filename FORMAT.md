@@ -7,6 +7,10 @@ files.
 
 All integers and floats are **little-endian**.
 
+For application behavior rather than byte layout, see
+[memory and persistence](docs/MEMORY.md). Saving an AMEM file does not save
+the live record dictionary, TTLs, or writer state.
+
 ---
 
 ## Layout

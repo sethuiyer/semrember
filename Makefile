@@ -2,10 +2,17 @@ CRYSTAL ?= crystal
 SHARDS ?= shards
 CRYSTAL_FLAGS ?= --release
 BUILD   ?= build
+PREFIX  ?= $(HOME)/.local
+DESTDIR ?=
+DX_PYTHON ?= python3
 
-.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke
+.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke
 
 all: cli server
+
+install: all
+	install -d "$(DESTDIR)$(PREFIX)/bin"
+	install -m 755 "$(BUILD)/semrember" "$(BUILD)/semrember-server" "$(DESTDIR)$(PREFIX)/bin/"
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -40,6 +47,9 @@ test: spec
 
 smoke:
 	python3 tools/http_smoke.py --server $(BUILD)/semrember-server --cli $(BUILD)/semrember
+
+dx-smoke:
+	python3 tools/dx_smoke.py --server $(BUILD)/semrember-server --cli $(BUILD)/semrember --python "$(DX_PYTHON)" --crystal "$(CRYSTAL)"
 
 bench: cli
 	AMEM=$(AMEM) $(CRYSTAL) run --release tools/bench.cr
