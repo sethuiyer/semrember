@@ -79,12 +79,7 @@ module Semrember
         (cp >= 0x2F800 && cp <= 0x2FA1F)
     end
 
-    # Python's SentencePiece normalizer drops Cc, preserving Cf and joiners.
-    def is_control(cp : Int32) : Bool
-      (cp < 0x20 || (cp >= 0x7F && cp <= 0x9F)) && !is_space(cp)
-    end
-
-    private def ascii_punct(cp : Int32) : Bool
+    def ascii_punct(cp : Int32) : Bool
       (cp >= 33 && cp <= 47) || (cp >= 58 && cp <= 64) ||
         (cp >= 91 && cp <= 96) || (cp >= 123 && cp <= 126)
     end
@@ -134,10 +129,18 @@ module Semrember
       end
     end
 
-    # BERT-style normalization: lowercase, decompose, strip marks, and put
-    # spaces around CJK characters.
+    # BERT clean_text keeps tabs, newlines, and carriage returns as spaces.
+    BERT_REMOVED = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\p{Cf}\p{Co}\x{FFFD}]/
+    # These mappings are from the shipped multilingual model's charsmap.
+    SP_REMOVED = /[\x01-\x08\x0B\x0E-\x1F\x7F\x8F\x9F]/
+    SP_SPACES  = /[\x{200B}-\x{200F}\x{FEFF}\x{FFFD}]/
+
+    # Lowercase each codepoint independently, as Hugging Face Tokenizers does.
     def bert_normalize(text : String) : String
-      lowered = downcase(text)
+      cleaned = text.gsub(BERT_REMOVED, "")
+      lowered = String.build(cleaned.bytesize) do |io|
+        cleaned.each_codepoint { |cp| lower_cp(cp).each { |c| io << c.chr } }
+      end
       stripped = strip_marks(lowered)
       String.build(stripped.bytesize * 2) do |io|
         last_space = true
@@ -165,10 +168,10 @@ module Semrember
     # SentencePiece normalization: NFKC, drop control characters, collapse
     # whitespace, and isolate punctuation.
     def sp_normalize(text : String) : String
-      buf = String.build(text.bytesize * 2) do |io|
+      cleaned = text.gsub(SP_REMOVED, "").gsub(SP_SPACES, " ")
+      buf = String.build(cleaned.bytesize * 2) do |io|
         last_space = true
-        text.unicode_normalize(:nfkc).each_codepoint do |cp|
-          next if is_control(cp)
+        cleaned.unicode_normalize(:nfkc).each_codepoint do |cp|
           if is_space(cp)
             unless last_space
               io << ' '

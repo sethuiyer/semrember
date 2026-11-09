@@ -33,6 +33,25 @@ def kemal_request(handler : HTTP::Handler, method : String, path : String, body 
 end
 
 describe "Kemal HTTP integration" do
+  it "removes a wave of expired keys from exact and semantic reads" do
+    with_kemal do |handler, service|
+      ["disk", "host", "cert"].each do |key|
+        kemal_request(handler, "PUT", "/v1/kv/#{key}", {value: key}.to_json).status_code.should eq 200
+      end
+      expired = Time.utc - 1.second
+      service.expiry["disk"] = expired
+      service.expiry["host"] = expired
+      service.expiry["cert"] = Time.utc + 1.hour
+
+      response = kemal_request(handler, "POST", "/v1/similar", {text: "disk", top_k: 3}.to_json)
+      JSON.parse(response.body)["candidates"].as_a.map { |candidate| candidate["key"].as_s }.should eq ["cert"]
+      kemal_request(handler, "GET", "/v1/kv/disk").status_code.should eq 404
+      kemal_request(handler, "GET", "/v1/kv/host").status_code.should eq 404
+      kemal_request(handler, "GET", "/v1/kv/cert").status_code.should eq 200
+      service.expiry.keys.should eq ["cert"]
+    end
+  end
+
   it "mounts the versioned routes without changing JSON responses" do
     with_kemal do |handler, _service|
       ping = kemal_request(handler, "GET", "/v1/ping")

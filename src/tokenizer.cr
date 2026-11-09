@@ -1,10 +1,8 @@
 # tokenizer.cr — WordPiece and SentencePiece-Unigram tokenizers.
 #
-# Both are reimplementations of the tokenizers used by the static embedding
-# models, written so that the token ids match the reference implementation
-# exactly.  The static models were distilled from BERT-style and
-# SentencePiece-style encoders, and a model that produces different token
-# ids produces different embeddings — parity here is not cosmetic.
+# These implement the tokenizer paths for the M2VE and M2VS model files.
+# Token IDs select embedding rows, so differences in segmentation change
+# the resulting vectors.
 
 require "./unicode"
 
@@ -25,7 +23,7 @@ module Semrember
       parts = [] of String
       cur = [] of Char
       word.each do |ch|
-        if Unicode.is_punct(ch.ord)
+        if Unicode.ascii_punct(ch.ord) || Unicode.is_punct(ch.ord)
           unless cur.empty?
             parts << String.build { |io| cur.each { |c| io << c } }
             cur = [] of Char

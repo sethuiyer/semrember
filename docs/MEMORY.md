@@ -116,6 +116,10 @@ query/load time. Missing or wrong-dimension encoders are rejected. AMEM v3
 cannot distinguish two different encoders of the same dimension, so retaining
 the original encoder is the caller's responsibility.
 
+Retrain hybrid AMEM files built before the static tokenizer correction.
+Their weights were fitted with the earlier feature mapping, and AMEM v3
+cannot identify which tokenizer behavior produced them.
+
 ## Starting a service from AMEM
 
 ```bash

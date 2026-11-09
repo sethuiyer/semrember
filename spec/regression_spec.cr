@@ -23,6 +23,52 @@ def with_test_encoder(dim : Int32 = 2, &block : String ->)
 end
 
 describe "tokenizer regressions" do
+  it "matches base-8M WordPiece IDs for ASCII symbols and Greek sigma" do
+    # IDs from the shipped tokenizer.json, with only the tokens used here.
+    tok = Semrember::WordPiece.new({
+      "[UNK]" => 1, "+" => 15, "=" => 33, "a" => 43, "b" => 44, "c" => 45,
+      "ο" => 175, "key" => 2151, "value" => 2649, "##σ" => 28739,
+      "process" => 1838, "crashed" => 7013,
+    })
+    tok.encode("key=value").should eq [2151, 33, 2649]
+    tok.encode("a+b=c").should eq [43, 15, 44, 33, 45]
+    tok.encode("C++ process crashed").should eq [45, 15, 15, 1838, 7013]
+    tok.encode("ΟΣ").should eq [175, 28739]
+  end
+
+  it "drops BERT control, format and replacement characters before splitting" do
+    tok = Semrember::WordPiece.new({"[UNK]" => 1, "disk" => 8791, "full" => 1446})
+    ["dis\u0000k", "dis\u0001k", "dis\u001ck", "\uFEFFdisk", "dis\uFFFDk",
+     "dis\u200Dk", "dis\u00ADk", "dis\uE000k"].each do |input|
+      tok.encode(input).should eq [8791]
+    end
+    tok.encode("disk\tfull\ndisk\rfull").should eq [8791, 1446, 8791, 1446]
+  end
+
+  it "matches multilingual IDs for control, format and replacement characters" do
+    tok = Semrember::UnigramSP.new({
+      "<unk>" => 1, "▁dis" => 2835, "▁disk" => 28336, "▁k" => 470, "k" => 90,
+      "\u00AD" => 229,
+    })
+    ["\uFEFFdisk", "dis\u0001k", "dis\u001ck"].each do |input|
+      tok.encode(input).should eq [28336]
+    end
+    ["dis\uFFFDk", "dis\u200Dk", "dis\uFEFFk"].each do |input|
+      tok.encode(input).should eq [2835, 470]
+    end
+    tok.encode("dis\u00ADk").should eq [2835, 229, 90]
+    tok.encode("dis\u0000k").should eq [2835, 1, 90]
+  end
+
+  it "excludes WordPiece unknowns from the mean while exposing the raw IDs" do
+    with_test_encoder do |path|
+      encoder = Semrember::StaticEncoder.new(path)
+      encoder.encode_ids("disk 🙂").should eq [1, 0]
+      encoder.encode("disk 🙂").should eq encoder.encode("disk")
+      encoder.encode("🙂").should be_empty
+    end
+  end
+
   it "keeps the lowercase table unchanged across calls and contexts" do
     3.times do
       Semrember::Unicode.downcase("ΣΣ").should eq "σς"
@@ -56,6 +102,26 @@ describe "CSV boundary regressions" do
 end
 
 describe "memory update regressions" do
+  it "returns each similar key once without discarding training weights" do
+    mem = Semrember::Memory.new.fit({"disk full" => "free_disk", "host down" => "fix_dns"},
+      {"disk full" => 3})
+    mem.stored.should eq 4
+    mem.similar("disk full", 2).map(&.[0]).should eq ["disk full", "host down"]
+  end
+
+  it "deletes a batch of keys including weighted rows and prunes unused labels" do
+    mem = Semrember::Memory.new.fit({"disk full" => "x", "host down" => "y", "bad cert" => "z"},
+      {"disk full" => 3})
+    mem.novelty("disk full")
+    mem.delete_many(["disk full", "host down", "disk full", "missing"]).should be_true
+    mem.delete_many(["missing"]).should be_false
+    mem.stored.should eq 1
+    mem.labels.should eq ["z"]
+    mem.similar("disk full").map(&.[0]).should eq ["bad cert"]
+    mem.novelty("disk full").should be > 0.9
+    mem.query("bad cert")[0][0].should eq "z"
+  end
+
   it "bootstraps a fresh or explicitly empty dual writer" do
     [Semrember::Memory.new, Semrember::Memory.new.fit({} of String => String)].each do |mem|
       mem.set("disk full", "free_disk").should be_nil

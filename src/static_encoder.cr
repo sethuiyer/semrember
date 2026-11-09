@@ -25,6 +25,7 @@ module Semrember
     @vocab : Hash(String, Int32)
     @scores : Array(Float32)?
     @tok : WordPiece | UnigramSP
+    @pool_unk_id : Int32?
 
     def initialize(path : String)
       @data = File.read(path).to_slice
@@ -69,12 +70,12 @@ module Semrember
       need = off + v * d * 2
       raise "#{path}: truncated embedding matrix" if @data.size < need
       @embedding_count = v
-      unk = vocab["[UNK]"]? || vocab["<unk>"]? || 0
       @tok = if magic == MAGIC_WP
                WordPiece.new(vocab)
              else
                UnigramSP.new(vocab, scores)
              end
+      @pool_unk_id = @tok.as?(WordPiece).try(&.unk_id)
       @tokenizer = magic == MAGIC_WP ? "WordPiece" : "SentencePiece"
     end
 
@@ -98,9 +99,13 @@ module Semrember
     #   * the norm's sum of squares is accumulated in float64, which lands
     #     closer to numpy's BLAS dot product than a float32 sum would.
     def encode64(text : String) : Array(Float64)
-      ids = @tok.encode(text)
-      vec = Array(Float32).new(@dim, 0_f32)
+      ids = encode_ids(text)
+      if unk_id = @pool_unk_id
+        ids.reject! { |id| id == unk_id }
+      end
       return [] of Float64 if ids.empty?
+
+      vec = Array(Float32).new(@dim, 0_f32)
       ids.each do |id|
         @dim.times { |d| vec[d] = (vec[d] + embedding(id, d)).to_f32 }
       end
@@ -116,6 +121,7 @@ module Semrember
       encode64(text).map { |v| v.to_f32 }
     end
 
+    # Raw tokenizer IDs, including unknown pieces before pooling.
     def encode_ids(text : String) : Array(Int32)
       @tok.encode(text)
     end
