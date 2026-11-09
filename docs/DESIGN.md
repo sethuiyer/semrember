@@ -79,50 +79,35 @@ is checked against an independent one on three axes that must agree:
 3. Token ids    the static encoder segments text identically
 ```
 
-Measured on the 42-signature incident corpus:
+The original lexical comparison used the 42-signature incident corpus.
+AMEM bytes were identical, the largest score difference was 8.1e-07, and
+both implementations could load each other's files.
 
-| | lexical | base-8M | multilingual-128M |
-|---|---|---|---|
-| AMEM bytes identical | **yes** | 1 of 21,270 float16 weights differs by 1 ULP | 2 of 21,270 differ by 1 ULP |
-| score agreement | 8.1e-07 | 5.8e-07 | 9.3e-07 |
-| token ids identical | — | **yes** (WordPiece) | **yes** (SentencePiece Unigram + Viterbi) |
-| cross-load both ways | **yes** | **yes** | **yes** |
+The historical static comparison used the companion Python semrember
+implementation. That comparison did not verify parity with model2vec.
+The regression suite now checks specific tokenizer cases against IDs from
+the shipped models, including ASCII symbols, control and format characters,
+and Greek sigma. WordPiece embeddings exclude unknown tokens from the
+mean. The `tokens` CLI command shows the raw tokenizer IDs before pooling.
 
-The token-id check covers the awkward cases — Greek final sigma, combining
-marks, Devanagari, CJK, and punctuation isolation — because those are
-exactly where two independent implementations of the same tokenizer drift
-apart.
-
-The one differing weight is a float16 rounding boundary: the two
-implementations accumulate the static encoder's normalisation sum in a
-different order, which is worth ~1e-7 relative, which lands on the wrong
-side of a rounding tie for one value in ten thousand.
-
-The harness that produces these numbers is `tools/parity.py`. It is a
-**maintainer tool**: it compares against a reference implementation that is
-not part of this repository, so a public checkout cannot reproduce it. It is
-kept here because a conformance claim is only worth something if the check
-that backs it is visible:
+The `tools/parity.py` maintainer harness still compares with the companion
+implementation. It requires a separate reference checkout, and the static
+comparison can diverge when that checkout uses the older tokenizer behavior.
 
 ```bash
-python3 tools/parity.py --python-root ../ --static models/potion-base-8M.bin
+python3 tools/parity.py --python-root ../
 ```
 
-Matching the reference bit-for-bit required reproducing two details that are
-easy to get wrong and impossible to guess:
+The BERT tokenizer lowercases each codepoint independently, mapping
+`"ΣΣ"` to `"σσ"`. The separate `Unicode.downcase` helper preserves the
+contextual lowercase behavior used by the companion implementation.
 
-* **the contextual final-sigma rule** — Python's `str.lower()` maps `"ΣΣ"` to
-  `"σς"`; a codepoint-wise mapping gives `"σσ"`. Crystal's `String#downcase`
-  is codepoint-wise, so the rule is implemented explicitly here, using the
-  same cased and case-ignorable tables the C library uses.
-* **the type flow of the arithmetic** — the reference keeps the static vector
-  in float64 until the caller casts it, and computes the joint norm over
-  that float64 value. Rounding the norm early propagates into every
-  weight.
+The static encoder accumulates its token mean in float32. It keeps the
+normalized vector in float64 until the caller casts it. Rounding the norm
+early propagates into the fitted weights.
 
-The Unicode tables are generated from the C implementation
-(`tools/gen_unicode_tables.py`) rather than re-derived, so the two agree by
-construction rather than by luck.
+The Unicode tables come from the C implementation
+(`tools/gen_unicode_tables.py`).
 
 ## Performance and footprint
 

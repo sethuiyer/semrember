@@ -44,4 +44,69 @@ module Semrember
       read_u32(b, off).unsafe_as(Float32)
     end
   end
+
+  # ── float16 (IEEE 754 binary16), round-to-nearest-even ────────────────
+  # AMEM stores weights as float16.  numpy and the C library agree bit for
+  # bit on this conversion, so files are byte-identical across implementations.
+  module F16
+    extend self
+
+    def to_f32(h : UInt16) : Float32
+      sign = (h & 0x8000_u16).to_u32 << 16
+      exp = (h >> 10).to_u32 & 0x1F_u32
+      # The mask must be UInt16: mixing widths leaves the result UInt16, and
+      # `mant << 13` would then overflow and wrap to zero, silently
+      # truncating every weight to its power-of-two precision.
+      mant = (h & 0x03FF_u16).to_u32
+      bits =
+        if exp == 0
+          if mant == 0
+            sign
+          else
+            e = -14
+            m = mant
+            while (m & 0x0400_u32) == 0
+              m <<= 1
+              e -= 1
+            end
+            m &= 0x03FF_u32
+            sign | ((e + 127).to_u32 << 23) | (m << 13)
+          end
+        elsif exp == 31
+          sign | 0x7F80_0000_u32 | (mant << 13)
+        else
+          sign | ((exp + 112_u32) << 23) | (mant << 13)
+        end
+      bits.unsafe_as(Float32)
+    end
+
+    def from_f32(f : Float32) : UInt16
+      x = f.unsafe_as(UInt32)
+      sign = ((x >> 16) & 0x8000_u32).to_u16
+      absx = x & 0x7FFF_FFFF_u32
+      if absx >= 0x7F80_0000_u32
+        return absx > 0x7F80_0000_u32 ? (sign | 0x7E00_u16) : (sign | 0x7C00_u16)
+      end
+      exp = (absx >> 23).to_i32 & 0xFF
+      mant = absx & 0x007F_FFFF_u32
+      return sign if exp == 0
+      e = exp - 127 + 15
+      return sign | 0x7C00_u16 if e >= 31
+      if e <= 0
+        return sign if e < -10
+        mant |= 0x0080_0000_u32
+        shift = 14 - e
+        half = mant >> shift
+        rem = mant & ((1_u32 << shift) - 1)
+        halfway = 1_u32 << (shift - 1)
+        half += 1 if rem > halfway || (rem == halfway && (half & 1) == 1)
+        return sign | half.to_u16
+      end
+      half = (e.to_u32 << 10) | (mant >> 13)
+      rem = mant & 0x1FFF_u32
+      half += 1 if rem > 0x1000_u32 || (rem == 0x1000_u32 && (half & 1) == 1)
+      return sign | 0x7C00_u16 if half >= 0x7C00_u32
+      sign | half.to_u16
+    end
+  end
 end

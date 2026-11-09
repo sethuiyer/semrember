@@ -188,4 +188,9 @@ module Semrember
   end
 end
 
-exit Semrember::Cli.run(ARGV)
+begin
+  exit Semrember::Cli.run(ARGV)
+rescue ex
+  STDERR.puts "error: #{ex.message}"
+  exit 1
+end

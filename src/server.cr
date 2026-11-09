@@ -456,7 +456,15 @@ module Semrember
     end
 
     private def purge_all_expired
-      @expiry.keys.each { |k| purge_expired(k) }
+      now = Time.utc
+      expired = @expiry.keys.select { |key| @expiry[key] <= now }
+      return if expired.empty?
+
+      @mem.delete_many(expired) if @mem.writable?
+      expired.each do |key|
+        @expiry.delete(key)
+        @records.delete(key)
+      end
     end
 
     # A small glob matcher for SCAN's MATCH argument: * and ? only.
