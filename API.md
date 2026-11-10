@@ -193,10 +193,12 @@ observations change; the first query after a change still builds it.
 
 ## Durability and consistency
 
-The service is **in-memory**. Records live in the process; there is no
-write-ahead log, no persistence, and no replication. Restarting loses
-the exact records. A model file preserves classification weights, not the
-records or writer state.
+The service defaults to **in-memory** operation. With `--data` and
+`--encryption-key-file`, successful mutations commit an encrypted, fsynced
+snapshot before acknowledgement. Records and absolute TTLs survive restart;
+the semantic index is rebuilt. See [durability](docs/DURABILITY.md) for setup,
+performance costs and failure semantics. Replication is not implemented.
+AMEM model files still preserve classification weights, not records or writer state.
 
 Within a single process:
 

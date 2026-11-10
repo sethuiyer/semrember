@@ -20,6 +20,7 @@ require "kemal"
 require "json"
 require "./semrember"
 require "./csv"
+require "./encrypted_store"
 
 module Semrember
   class Server
@@ -29,11 +30,17 @@ module Semrember
     @mem : Memory
     @lock : Mutex
     @started : Time
+    @store : EncryptedStore?
+    @encoder : StaticEncoder?
 
     def initialize(model : String?, static : String?, train : String? = nil,
-                   key_col : String = "message", val_col : String = "action")
+                   key_col : String = "message", val_col : String = "action",
+                   data : String? = nil, encryption_key : Bytes? = nil)
       raise ArgumentError.new("--model and --train are mutually exclusive") if model && train
+      raise ArgumentError.new("data and encryption_key must be supplied together") unless data.nil? == encryption_key.nil?
+      raise ArgumentError.new("durable mode cannot be combined with --model or --train") if data && (model || train)
       encoder = static.try { |p| StaticEncoder.new(p) }
+      @encoder = encoder
       @mem = if model
                Memory.load(model, static: encoder)
              elsif train
@@ -54,6 +61,36 @@ module Semrember
           @records[k] = v
         end
       end
+      if data
+        store = EncryptedStore.new(data, encryption_key.not_nil!)
+        @store = store
+        begin
+          @records, @expiry = store.load
+          expired = @expiry.select { |_, deadline| deadline <= Time.utc }.keys
+          expired.each { |key| @records.delete(key); @expiry.delete(key) }
+          @mem = Memory.new(solver: :dual, static: @encoder).fit(@records)
+          store.save(@records, @expiry)
+        rescue ex
+          store.close
+          raise ex
+        end
+      end
+    end
+
+    def close
+      @store.try(&.close)
+    end
+
+    # Build candidate state first; only publish it after the disk commit succeeds.
+    private def commit_change(&block : Hash(String, String), Hash(String, Time) ->)
+      records = @records.dup
+      expiry = @expiry.dup
+      yield records, expiry
+      candidate = Memory.new(solver: :dual, static: @encoder).fit(records)
+      @store.not_nil!.save(records, expiry)
+      @records = records
+      @expiry = expiry
+      @mem = candidate
     end
 
     def listen(host : String, port : Int32)
@@ -106,6 +143,7 @@ module Semrember
       path = ctx.request.path
       method = ctx.request.method == "HEAD" ? "GET" : ctx.request.method
       begin
+        @store.try(&.ensure_healthy!)
         if {"/v1/ping", "/v1/info", "/v1/novelty", "/v1/kv"}.includes?(path) && method != "GET"
           respond(ctx, 405) { |j| j.object { j.field "error", "method not allowed" } }
           return
@@ -169,6 +207,7 @@ module Semrember
       j.field "version", Semrember::VERSION
       j.field "uptime_seconds", (Time.utc - @started).total_seconds.to_i64
       j.field "records", @records.size
+      j.field "persistence", @store ? "encrypted-snapshot" : "memory"
       j.field "labels", @mem.labels.size
       j.field "d_tfidf", @mem.d_tfidf
       j.field "d_static", @mem.d_static
@@ -206,9 +245,13 @@ module Semrember
         prev = @lock.synchronize do
           purge_expired(key)
           old = @records[key]?
-          @mem.set(key, value) if @mem.writable?
-          @records[key] = value
-          @expiry.delete(key)
+          if @store
+            commit_change { |records, expiry| records[key] = value; expiry.delete(key) }
+          else
+            @mem.set(key, value) if @mem.writable?
+            @records[key] = value
+            @expiry.delete(key)
+          end
           old
         end
         respond(ctx, 200) do |j|
@@ -221,10 +264,15 @@ module Semrember
       when "DELETE"
         removed = @lock.synchronize do
           purge_expired(key)
-          @mem.delete(key) if @mem.writable?
-          had = @records.delete(key)
-          @expiry.delete(key)
-          !had.nil?
+          had = @records.has_key?(key)
+          if @store
+            commit_change { |records, expiry| records.delete(key); expiry.delete(key) } if had
+          else
+            @mem.delete(key) if @mem.writable?
+            @records.delete(key)
+            @expiry.delete(key)
+          end
+          had
         end
         respond(ctx, 200) { |j| j.object { j.field "deleted", removed } }
       when "POST"
@@ -234,7 +282,12 @@ module Semrember
           ok = @lock.synchronize do
             purge_expired(key)
             if @records.has_key?(key) && secs > 0
-              @expiry[key] = Time.utc + secs.seconds
+              deadline = Time.utc + secs.seconds
+              if @store
+                commit_change { |_, expiry| expiry[key] = deadline }
+              else
+                @expiry[key] = deadline
+              end
               true
             else
               false
@@ -446,20 +499,32 @@ module Semrember
     end
 
     private def purge_expired(key : String)
+      @store.try(&.ensure_healthy!)
       deadline = @expiry[key]?
       return unless deadline
       if deadline <= Time.utc
-        @mem.delete(key) if @mem.writable?
-        @expiry.delete(key)
-        @records.delete(key)
+        if @store
+          commit_change { |records, expiry| records.delete(key); expiry.delete(key) }
+        else
+          @mem.delete(key) if @mem.writable?
+          @expiry.delete(key)
+          @records.delete(key)
+        end
       end
     end
 
     private def purge_all_expired
+      @store.try(&.ensure_healthy!)
       now = Time.utc
       expired = @expiry.keys.select { |key| @expiry[key] <= now }
       return if expired.empty?
 
+      if @store
+        commit_change do |records, expiry|
+          expired.each { |key| records.delete(key); expiry.delete(key) }
+        end
+        return
+      end
       @mem.delete_many(expired) if @mem.writable?
       expired.each do |key|
         @expiry.delete(key)

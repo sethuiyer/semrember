@@ -81,15 +81,16 @@ installation or prebuilt-binary release assumed by these instructions.
 - A running `--train` service keeps exact records and live observations.
 - An AMEM file saves vocabulary, IDF, labels, and float16 prediction weights.
 - AMEM does **not** save record keys, TTLs, training observations, or writer state.
-- Restarting the service loses in-memory writes. There is no HTTP save endpoint.
+- Default mode loses live writes on restart. Opt into [encrypted durable storage](docs/DURABILITY.md)
+  with `--data state.enc --encryption-key-file secret.key` to recover records and TTLs.
 - A `--model` service starts with an empty exact store. Its writes report
   `semantic_updated: false`; similarity, novelty, and escalation return HTTP 409.
-- Vocabulary is fixed after fitting. New keys can update weights only through
+- In default mode, vocabulary is fixed after fitting. New keys can update weights only through
   existing features. Refit from a representative corpus to expand vocabulary.
 
 Read [what it can remember and how persistence works](docs/MEMORY.md) before
-using it as a cache, router, or long-running service. Keep durable source records
-in your application if they must survive a restart.
+using it as a cache, router, or long-running service. Durable mode restores exact
+records and rebuilds a writable semantic index on restart.
 
 ## Develop and verify
 
