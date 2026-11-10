@@ -142,11 +142,12 @@ mutually exclusive.
 
 ## Durable application data
 
-The service has no write-ahead log, record snapshot, replication, or HTTP save
-endpoint. A successful PUT is an in-memory acknowledgement. It does not write
-back to the input CSV or an AMEM file.
+By default, a successful PUT is an in-memory acknowledgement. It does not write
+back to the input CSV or an AMEM file. For built-in encrypted record snapshots,
+use [durable mode](DURABILITY.md). It restores records, absolute TTLs and a rebuilt
+writable semantic index. There is no replication or HTTP save endpoint.
 
-To recover live application state:
+To recover application state managed externally instead:
 
 1. Retain current records and accepted changes in your application's durable store.
 2. Remove deleted/expired records and export the current keys and labels as a corpus.
@@ -159,7 +160,8 @@ exact record values come from your restored source records.
 
 Expiration is lazy. A read or semantic operation removes expired observations
 from the relevant live state before using them. A PUT replaces a record and
-clears its prior TTL. Neither deadlines nor live writes survive a restart.
+clears its prior TTL. In default mode, neither deadlines nor live writes survive a restart. Durable
+mode preserves them and removes expired records before rebuilding the index.
 
 ## Cost of live memory
 

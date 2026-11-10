@@ -48,6 +48,10 @@ test: spec
 smoke:
 	python3 tools/http_smoke.py --server $(BUILD)/semrember-server --cli $(BUILD)/semrember
 
+.PHONY: durable-smoke
+durable-smoke:
+	python3 tools/durable_smoke.py --server $(BUILD)/semrember-server
+
 dx-smoke:
 	python3 tools/dx_smoke.py --server $(BUILD)/semrember-server --cli $(BUILD)/semrember --python "$(DX_PYTHON)" --crystal "$(CRYSTAL)"
 

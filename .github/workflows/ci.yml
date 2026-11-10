@@ -14,12 +14,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install encryption library
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev
       - name: Build
         run: make all fetch-model
       - name: Test
         run: make test
       - name: HTTP smoke test
         run: make smoke
+      - name: Encrypted hard-kill recovery
+        run: make durable-smoke
       - name: Install Python client from checkout
         run: |
           python3 -m venv build/client-venv

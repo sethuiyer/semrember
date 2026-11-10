@@ -10,6 +10,7 @@ shell; native Windows installation is not covered by this guide.
 | Tool | Required for |
 |---|---|
 | Crystal >= 1.12 and its C toolchain/libraries | Building the executables or using the library |
+| libsodium development library (`libsodium-dev` on Debian/Ubuntu) | Building the server and specs; libsodium runtime is also required |
 | Shards | Installing the Kemal service's locked build dependencies |
 | Git and Make | Checking out and building this repository |
 | curl | The HTTP walkthrough |
@@ -23,6 +24,10 @@ for your operating system. Confirm that both tools are on PATH:
 crystal --version
 shards --version
 ```
+
+On Debian/Ubuntu, install the server encryption dependency with
+`sudo apt-get install libsodium-dev` (macOS: `brew install libsodium`).
+The engine and standalone CLI do not require libsodium.
 
 ## Install the executables
 

@@ -114,6 +114,7 @@ and the read-only nature of an AMEM reader.
 Stop terminal A with Ctrl+C. Kemal drains current requests before exiting.
 Restarting with the same CSV rebuilds the original records; it does not restore
 changes made through PUT or their TTLs. This walkthrough never edits the CSV.
+To retain live writes and TTLs instead, start with [encrypted durable storage](DURABILITY.md).
 
 For your own corpus, use a UTF-8 CSV with a header and string keys/labels:
 
