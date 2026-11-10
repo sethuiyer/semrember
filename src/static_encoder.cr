@@ -9,6 +9,7 @@
 # resident memory.  The lexical-only path — the "floppy" mode — needs no
 # encoder at all.
 
+require "digest/sha256"
 require "./codec"
 require "./tokenizer"
 
@@ -26,6 +27,7 @@ module Semrember
     @scores : Array(Float32)?
     @tok : WordPiece | UnigramSP
     @pool_unk_id : Int32?
+    @fingerprint : String?
 
     def initialize(path : String)
       @data = File.read(path).to_slice
@@ -77,6 +79,12 @@ module Semrember
              end
       @pool_unk_id = @tok.as?(WordPiece).try(&.unk_id)
       @tokenizer = magic == MAGIC_WP ? "WordPiece" : "SentencePiece"
+    end
+
+    # Computed lazily: only durable mode needs an encoder identity, and hashing a
+    # 265 MB model should not slow down every CLI query that loads it.
+    def fingerprint : String
+      @fingerprint ||= Digest::SHA256.hexdigest(@data)
     end
 
     @embedding_offset : Int32

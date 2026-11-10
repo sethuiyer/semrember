@@ -19,6 +19,8 @@ does not generate answers or reconstruct arbitrary documents from its weights.
 ## Install
 
 Requires Crystal >= 1.12, Shards, Git, Make, and the system C toolchain/libraries.
+Building the HTTP service also requires libsodium development headers
+(`libsodium-dev` on Debian/Ubuntu); the engine and standalone CLI do not.
 Follow the [Crystal installation guide](https://crystal-lang.org/install/) for
 your platform, then run:
 

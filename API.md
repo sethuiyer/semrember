@@ -178,6 +178,7 @@ observations change; the first query after a change still builds it.
   "version": "1.0.0",
   "uptime_seconds": 12,
   "records": 42,
+  "persistence": "memory",
   "labels": 10,
   "d_tfidf": 2127,
   "d_static": 0,

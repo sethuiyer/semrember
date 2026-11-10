@@ -11,6 +11,38 @@ private def with_store(&block : String, Bytes ->)
   end
 end
 
+# Two tiny M2VE models with the same dimension but different bytes.
+private def write_test_encoder(path : String, variant : Int32 = 0, dim : Int32 = 2)
+  File.open(path, "wb") do |file|
+    file << "M2VE"
+    [1, 3, dim].each { |value| file.write(Semrember::Codec.u32(value)) }
+    ["[UNK]", "disk", "host"].each do |token|
+      file.write(Semrember::Codec.u16(token.bytesize))
+      file << token
+    end
+    3.times do |i|
+      dim.times do |d|
+        value = d == (i + variant) % dim ? 1_f32 : 0_f32
+        file.write(Semrember::Codec.u16(Semrember::F16.from_f32(value)))
+      end
+    end
+  end
+end
+
+private def with_test_encoders(&block : String, String ->)
+  dir = File.tempname("semrember-encoders")
+  Dir.mkdir(dir, 0o700)
+  begin
+    one = File.join(dir, "one.bin")
+    two = File.join(dir, "two.bin")
+    write_test_encoder(one, variant: 0)
+    write_test_encoder(two, variant: 1)
+    yield one, two
+  ensure
+    FileUtils.rm_rf(dir)
+  end
+end
+
 describe Semrember::EncryptedStore do
   it "reads a fixture encrypted with the official Etebase JS CryptoManager" do
     with_store do |path, key|
@@ -68,6 +100,62 @@ describe Semrember::EncryptedStore do
 end
 
 describe "Encrypted durable service" do
+  it "does not rewrite a valid snapshot when a restart has nothing to persist" do
+    with_store do |path, key|
+      server = Semrember::Server.new(nil, nil, data: path, encryption_key: key)
+      begin
+        put(server, "disk", "free_disk")[0].should eq(200)
+      ensure
+        server.close
+      end
+      before = File.read(path)
+      restarted = Semrember::Server.new(nil, nil, data: path, encryption_key: key)
+      begin
+        File.read(path).should eq before
+      ensure
+        restarted.close
+      end
+    end
+  end
+
+  it "records a static encoder identity and rejects a different encoder on restart" do
+    with_store do |path, key|
+      with_test_encoders do |one, two|
+        server = Semrember::Server.new(nil, one, data: path, encryption_key: key)
+        begin
+          put(server, "disk", "free_disk")[0].should eq(200)
+        ensure
+          server.close
+        end
+        expect_raises(Semrember::PersistenceError) do
+          Semrember::Server.new(nil, two, data: path, encryption_key: key)
+        end
+        expect_raises(Semrember::PersistenceError) do
+          Semrember::Server.new(nil, nil, data: path, encryption_key: key)
+        end
+        Semrember::Server.new(nil, one, data: path, encryption_key: key).close
+      end
+    end
+  end
+
+  it "allows upgrading a lexical snapshot to a static encoder, then locks it" do
+    with_store do |path, key|
+      with_test_encoders do |one, two|
+        lexical = Semrember::Server.new(nil, nil, data: path, encryption_key: key)
+        begin
+          put(lexical, "disk", "free_disk")[0].should eq(200)
+        ensure
+          lexical.close
+        end
+        Semrember::Server.new(nil, one, data: path, encryption_key: key).close
+        expect_raises(Semrember::PersistenceError) do
+          Semrember::Server.new(nil, two, data: path, encryption_key: key)
+        end
+        Semrember::Server.new(nil, one, data: path, encryption_key: key).close
+      end
+    end
+  end
+
   it "restores exact records, semantic reads, deletes, TTLs and writable state" do
     with_store do |path, key|
       server = Semrember::Server.new(nil, nil, data: path, encryption_key: key)

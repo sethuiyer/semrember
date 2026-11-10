@@ -25,15 +25,22 @@ process is running. A second cooperating process using the same path is refused.
 Use a local filesystem that supports atomic rename, flock and directory fsync.
 
 `--data` and `--encryption-key-file` must be supplied together. They cannot be
-combined with `--model` or `--train`. `--static` is supported; supply the same
-encoder on restart if you want the same feature configuration. Encoder binaries
-are not included in snapshots. `/v1/info` reports `persistence: encrypted-snapshot`
+combined with `--model` or `--train`. `--static` is supported. When a static
+encoder is used, the snapshot records its tokenizer, dimension and a SHA-256
+fingerprint. Restarting with a different encoder is rejected instead of silently
+changing semantic scores. A lexical snapshot can be upgraded by restarting with
+`--static`; the encoder identity is recorded then. Encoder binaries are not
+included in snapshots. `/v1/info` reports `persistence: encrypted-snapshot`
 or `persistence: memory`.
 
 ## Commit and recovery
 
-Every PUT, DELETE, successful EXPIRE and expiration purge builds candidate records,
-deadlines and a semantic index before changing live state. The service then:
+Every PUT, DELETE, successful EXPIRE and expiration purge builds candidate records
+and deadlines before changing live state. The semantic index is rebuilt only when
+records change; an EXPIRE or same-value PUT updates the snapshot without refitting.
+On restart, a missing snapshot is created, but an existing valid snapshot is not
+rewritten unless expired records were purged or encoder metadata is being recorded.
+A mutation then:
 
 1. Encrypts the entire snapshot using a fresh 24-byte nonce.
 2. Writes a mode-0600 temporary file in the snapshot directory and fsyncs it.
@@ -67,8 +74,10 @@ The compatibility spec decrypts a fixture produced by the official Etebase JS
 CryptoManager (`etebase@0.43.0`) with this context and additional data.
 
 Wire format: `SMRENC01` (8 bytes) || nonce (24 bytes) || ciphertext || tag (16 bytes).
-Plaintext: JSON `{version: 1, records: {key: value}, expiry: {key: unix_ms}}`.
-The total snapshot size is limited to 64 MiB. Unsupported versions are rejected.
+Plaintext: JSON `{version: 2, encoder: null | "Tokenizer:dim:sha256", records:
+{key: value}, expiry: {key: unix_ms}}`. Version 1 snapshots are accepted and
+upgraded on the next successful write. The total snapshot size is limited to
+64 MiB. Unsupported versions are rejected.
 
 References: [Etebase crypto primitives](https://docs.etebase.com/protocol-specs/introduction),
 [upstream crypto implementation](https://github.com/etesync/etebase-rs/blob/c0c74b777724777713d0fbbaeb968ba1521aa8e8/src/crypto.rs).
@@ -82,9 +91,10 @@ or replacing it with another valid snapshot encrypted using the same key is not
 detected. Use a distinct key per store and trusted backups/checkpoints if you need
 rollback detection. A missing data file initializes a new empty store.
 
-Each mutation rewrites the entire snapshot and refits the index while holding the
-service lock. This trades throughput and temporary memory for a simple atomic
-commit boundary; it suits small stores. Refit updates vocabulary/IDF, so semantic
-scores can differ from default incremental mode. No WAL, replication, incremental
+Each mutation rewrites the entire snapshot while holding the service lock; record
+changes also refit the index. This trades throughput and temporary memory for a
+simple atomic commit boundary and suits small stores. Refit updates vocabulary/IDF,
+so semantic scores can differ from default incremental mode. EXPIRE and same-value
+PUTs still rewrite the snapshot, but reuse the current semantic index. No WAL, replication, incremental
 checkpointing or model-weight snapshot is claimed. AMEM export remains plaintext
 and unchanged; use this mode for the service's durable records.

@@ -62,14 +62,20 @@ module Semrember
         end
       end
       if data
-        store = EncryptedStore.new(data, encryption_key.not_nil!)
+        encoder_id = encoder.try { |e| "#{e.tokenizer}:#{e.dim}:#{e.fingerprint}" }
+        store = EncryptedStore.new(data, encryption_key.not_nil!, encoder_id)
         @store = store
         begin
+          snapshot_existed = store.exists?
           @records, @expiry = store.load
           expired = @expiry.select { |_, deadline| deadline <= Time.utc }.keys
           expired.each { |key| @records.delete(key); @expiry.delete(key) }
           @mem = Memory.new(solver: :dual, static: @encoder).fit(@records)
-          store.save(@records, @expiry)
+          # Do not rewrite a valid snapshot merely because the process restarted.
+          # Persist only a new file, a purge, or newly-recorded encoder metadata.
+          if !snapshot_existed || !expired.empty? || store.encoder_upgrade_pending
+            store.save(@records, @expiry)
+          end
         rescue ex
           store.close
           raise ex
@@ -86,7 +92,9 @@ module Semrember
       records = @records.dup
       expiry = @expiry.dup
       yield records, expiry
-      candidate = Memory.new(solver: :dual, static: @encoder).fit(records)
+      # EXPIRE and same-value PUTs change only deadlines (or nothing at all);
+      # reuse the semantic index instead of paying for a full refit.
+      candidate = records == @records ? @mem : Memory.new(solver: :dual, static: @encoder).fit(records)
       @store.not_nil!.save(records, expiry)
       @records = records
       @expiry = expiry
