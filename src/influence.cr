@@ -26,6 +26,23 @@ module Semrember
     end
   end
 
+  # A fully expanded numeric explanation of one leave-one-out deletion.
+  struct InfluenceTerms
+    getter a_ii : Float64
+    getter z_i : Float64
+    getter b_i : Array(Float64)
+    getter c_i : Array(Float64)
+    getter base_scores : Array(Float64)
+    getter delta : Array(Float64)
+    getter fast_scores : Array(Float64)
+    getter exact_scores : Array(Float64)
+    getter unstable : Bool
+
+    def initialize(@a_ii, @z_i, @b_i, @c_i, @base_scores, @delta,
+                   @fast_scores, @exact_scores, @unstable)
+    end
+  end
+
   # Optional phase timings for the influence pipeline.
   class BanzhafProfile
     property encode_ms = 0.0
@@ -205,6 +222,53 @@ module Semrember
 
     def memory_keys : Array(String)
       @train_keys.dup
+    end
+
+    # Expanded numbers for one memory/query pair.  Useful for docs, audits,
+    # and debugging the rank-one identity.
+    def influence_terms(q : String, i : Int32) : InfluenceTerms
+      a = @a.not_nil!
+      n = @train_keys.size
+      t = rows
+      raise IndexError.new("memory index out of range") unless 0 <= i < n
+      f = encode(q)
+      k = Array(Float64).new(n, 0_f64)
+      n.times do |j|
+        g = @train_feats[j]
+        s = sparse_dot(g, f)
+        if @d_static > 0
+          @d_static.times { |dd| s += g.st[dd].to_f64 * f.st[dd].to_f64 }
+        end
+        k[j] = s
+      end
+      z = Array(Float64).new(n, 0_f64)
+      n.times do |r|
+        s = 0.0_f64
+        n.times { |j| s += a[r * n + j] * k[j] }
+        z[r] = s
+      end
+      b = influence_ay(a, n, t)
+      base = Array(Float64).new(t, 0_f64)
+      t.times do |c|
+        s = 0.0_f64
+        n.times { |j| s += b[j * t + c] * k[j] }
+        base[c] = s
+      end
+      diag = a[i * n + i]
+      floor = influence_diag_floor(a, n)
+      unstable = diag <= floor
+      bi = Array(Float64).new(t) { |c| b[i * t + c] }
+      if unstable
+        exact = exact_leave_one_out_scores(q, i)
+        ci = Array(Float64).new(t, 0.0)
+        delta = Array(Float64).new(t) { |c| exact[c] - base[c] }
+        return InfluenceTerms.new(diag, z[i], bi, ci, base, delta, exact, exact, true)
+      end
+      ci = Array(Float64).new(t) { |c| bi[c] / diag }
+      delta = Array(Float64).new(t) { |c| -z[i] * ci[c] }
+      fast = Array(Float64).new(t) { |c| base[c] + delta[c] }
+      exact = exact_leave_one_out_scores(q, i)
+      InfluenceTerms.new(diag, z[i], bi, ci, base, delta, fast, exact, false)
     end
 
     # Ridge leverage h_i = 1 - λ A_ii.  Useful as a baseline retention score.
