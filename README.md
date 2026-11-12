@@ -76,6 +76,22 @@ installation and compilation can take longer than the walkthrough.
 The Python install command uses this checkout. There is no hosted-package
 installation or prebuilt-binary release assumed by these instructions.
 
+## Pilot demo: Canadian insurance FNOL triage
+
+[`examples/pilot_insurance_ca/`](examples/pilot_insurance_ca/README.md) is a
+runnable first pilot for a fictional Canadian P&C insurer. Semrember retrieves
+similar claims, past operational scars, fairness lessons, and attack patterns;
+Jev / System One supplies typed judgment; code routes to a human-owned queue.
+
+```bash
+make pilot-insurance        # offline, local-only fallback
+make pilot-insurance-live   # requires a TypeSafe API key
+```
+
+The demo uses synthetic data, never denies or pays a claim, and writes an
+optional HTML walkthrough and JSON audit. It is a routing demonstration, not a
+production claims decision system.
+
 ## Understand the memory before integrating
 
 **The live record dictionary and a saved model are different things.**

@@ -94,6 +94,77 @@ module Semrember
       end
       inv
     end
+
+    # Cholesky factorization of a symmetric positive-definite matrix,
+    # row-major lower-triangular L such that M = L L^T.
+    def cholesky(m : Array(Float64), n : Int32) : Array(Float64)
+      l = Array(Float64).new(n * n, 0_f64)
+      n.times do |i|
+        (i...n).each do |j|
+          s = m[i * n + j]
+          i.times { |k| s -= l[i * n + k] * l[j * n + k] }
+          if i == j
+            raise ArgumentError.new("matrix is not positive definite") if s <= 0.0
+            l[i * n + i] = Math.sqrt(s)
+          else
+            l[j * n + i] = s / l[i * n + i]
+          end
+        end
+      end
+      l
+    end
+
+    # Inverse of an SPD matrix from its Cholesky factor.  Solving for the
+    # inverse costs N^3/3 + N^3/3, roughly half of Gauss-Jordan's work.
+    def cholesky_inverse(m : Array(Float64), n : Int32) : Array(Float64)
+      l = cholesky(m, n)
+      inv_l = Array(Float64).new(n * n, 0_f64)
+      n.times do |col|
+        n.times do |i|
+          s = (i == col ? 1.0 : 0.0)
+          i.times { |k| s -= l[i * n + k] * inv_l[k * n + col] }
+          inv_l[i * n + col] = s / l[i * n + i]
+        end
+      end
+      inv = Array(Float64).new(n * n, 0_f64)
+      n.times do |i|
+        (i...n).each do |j|
+          s = 0.0
+          n.times { |k| s += inv_l[k * n + i] * inv_l[k * n + j] }
+          inv[i * n + j] = s
+          inv[j * n + i] = s
+        end
+      end
+      inv
+    end
+
+    # Cholesky first, Gauss-Jordan as a numerical fallback.
+    def inverse_spd(m : Array(Float64), n : Int32) : Array(Float64)
+      cholesky_inverse(m, n)
+    rescue ArgumentError
+      invert(m, n)
+    end
+
+    # Inverse of the principal submatrix obtained by deleting row/column i.
+    # A' = A_RR - A_Ri A_iR / A_ii.  One outer product, O(N^2).
+    def delete_principal(a : Array(Float64), n : Int32, i : Int32) : Array(Float64)
+      n1 = n - 1
+      out = Array(Float64).new(n1 * n1, 0_f64)
+      aii = a[i * n + i]
+      raise ArgumentError.new("singular principal submatrix") if aii.abs < 1e-12
+      ri = 0
+      n.times do |r|
+        next if r == i
+        ci = 0
+        n.times do |c|
+          next if c == i
+          out[ri * n1 + ci] = a[r * n + c] - a[r * n + i] * a[i * n + c] / aii
+          ci += 1
+        end
+        ri += 1
+      end
+      out
+    end
   end
 
   # ── features ──────────────────────────────────────────────────────────
@@ -138,7 +209,6 @@ module Semrember
     @train_feats : Array(Features)
     @a : Array(Float64)?  # dual inverse, N x N
     @x : Array(Float64)?  # dense observations, N x D
-    @ax : Array(Float64)? # cached representers A*X, N x D
     @novelty_inverse : Array(Float64)?
 
     def initialize(@solver : Symbol = :dual, @min_df : Int32 = 1,
@@ -163,7 +233,6 @@ module Semrember
       @train_feats = [] of Features
       @a = nil
       @x = nil
-      @ax = nil
       @novelty_inverse = nil
       @observations_available = true
     end
@@ -231,10 +300,14 @@ module Semrember
       idx = [] of Int32
       val = [] of Float32
       unless counts.empty?
-        counts.to_a.each do |(g, c)|
+        pairs = [] of Tuple(Int32, Float32)
+        counts.each do |(g, c)|
           i = @vocab[g]
           lf = Math.log(c.to_f64).to_f32
-          v = (1.0_f32 + lf) * @idf[i]
+          pairs << {i, (1.0_f32 + lf) * @idf[i]}
+        end
+        pairs.sort_by! { |(i, _)| i }
+        pairs.each do |(i, v)|
           idx << i
           val << v
         end
@@ -256,6 +329,49 @@ module Semrember
       s = 0.0_f64
       v.each { |x| s += x.to_f64 * x.to_f64 }
       s.to_f32
+    end
+
+    # Dot product over the sparse lexical half.  Both index arrays are sorted
+    # by encode, so this is a two-pointer intersection rather than a dense scan.
+    private def sparse_dot(a : Features, b : Features) : Float64
+      s = 0.0_f64
+      ai = 0
+      bi = 0
+      while ai < a.idx.size && bi < b.idx.size
+        av = a.idx[ai]
+        bv = b.idx[bi]
+        if av == bv
+          s += a.val[ai].to_f64 * b.val[bi].to_f64
+          ai += 1
+          bi += 1
+        elsif av < bv
+          ai += 1
+        else
+          bi += 1
+        end
+      end
+      s
+    end
+
+    # K = X X^T + λI.  The lexical half is sparse; the static half is dense
+    # but low-dimensional (256 in practice).
+    private def kernel_matrix(encs : Array(Features)) : Array(Float64)
+      n = encs.size
+      k = Array(Float64).new(n * n, 0_f64)
+      n.times do |i|
+        (i + 1).times do |j|
+          s = sparse_dot(encs[i], encs[j])
+          if @d_static > 0
+            a = encs[i].st
+            b = encs[j].st
+            @d_static.times { |dd| s += a[dd].to_f64 * b[dd].to_f64 }
+          end
+          k[i * n + j] = s
+          k[j * n + i] = s
+        end
+      end
+      n.times { |i| k[i * n + i] += @rls_reg }
+      k
     end
 
     # ── writers ─────────────────────────────────────────────────────────
@@ -352,6 +468,10 @@ module Semrember
     end
 
     # Exact ridge solution in the kernel dual: A = (X Xᵀ + λI)⁻¹, W = Y A X.
+    #
+    # The Gram is built from sparse lexical features plus the dense static
+    # half.  The inverse comes from Cholesky, not Gauss-Jordan.  W is formed
+    # as (A Y)ᵀ X, so the N×D representer matrix AX is never materialised.
     private def dual_rebuild(encs : Array(Features), ys : Array(Int32))
       d = d_total
       t = rows
@@ -359,42 +479,65 @@ module Semrember
       @w = Array(Float32).new(t * d, 0_f32)
       @a = nil
       @x = nil
-      @ax = nil
       return if n == 0
       x = Array(Float64).new(n * d, 0_f64)
       encs.each_with_index do |f, i|
         row = f.dense(@d_tfidf, @d_static)
         d.times { |dd| x[i * d + dd] = row[dd].to_f64 }
       end
-      k = Array(Float64).new(n * n, 0_f64)
+      k = kernel_matrix(encs)
+      a = Linalg.inverse_spd(k, n)
+      b = Array(Float64).new(n * t, 0_f64)
       n.times do |i|
-        (i + 1).times do |j|
-          s = 0.0_f64
-          d.times { |dd| s += x[i * d + dd] * x[j * d + dd] }
-          k[i * n + j] = s
-          k[j * n + i] = s
-        end
-      end
-      n.times { |i| k[i * n + i] += @rls_reg }
-      a = Linalg.invert(k, n)
-      ax = Array(Float64).new(n * d, 0_f64)
-      n.times do |i|
-        d.times do |dd|
-          s = 0.0_f64
-          n.times { |j| s += a[i * n + j] * x[j * d + dd] }
-          ax[i * d + dd] = s
+        n.times do |j|
+          b[i * t + ys[j]] += a[i * n + j]
         end
       end
       t.times do |c|
         d.times do |dd|
           s = 0.0_f64
-          n.times { |i| s += ax[i * d + dd] if ys[i] == c }
+          n.times { |i| s += b[i * t + c] * x[i * d + dd] }
           @w[c * d + dd] = s.to_f32
         end
       end
       @a = a
       @x = x
-      @ax = ax
+    end
+
+    # Debug/validation helper: recompute W = Yᵀ(XXᵀ + λI)⁻¹X from the
+    # current feature rows with an independent Cholesky solve, and return the
+    # relative residual against the incrementally maintained @w.  O(N³), so
+    # this is for tests and checkpoints, not the request path.
+    def writer_residual : Float64
+      n = @train_keys.size
+      t = rows
+      return 0.0 if n == 0 || t == 0
+      d = d_total
+      x = Array(Float64).new(n * d, 0_f64)
+      @train_feats.each_with_index do |f, i|
+        row = f.dense(@d_tfidf, @d_static)
+        d.times { |dd| x[i * d + dd] = row[dd].to_f64 }
+      end
+      k = kernel_matrix(@train_feats)
+      a = Linalg.inverse_spd(k, n)
+      b = Array(Float64).new(n * t, 0_f64)
+      n.times do |i|
+        n.times do |j|
+          b[i * t + @train_y[j]] += a[i * n + j]
+        end
+      end
+      max_ref = 0.0_f64
+      max_diff = 0.0_f64
+      t.times do |c|
+        d.times do |dd|
+          ref = 0.0_f64
+          n.times { |i| ref += b[i * t + c] * x[i * d + dd] }
+          diff = (@w[c * d + dd].to_f64 - ref).abs
+          max_ref = ref.abs if ref.abs > max_ref
+          max_diff = diff if diff > max_diff
+        end
+      end
+      max_diff / (max_ref > 1e-12 ? max_ref : 1.0)
     end
 
     # ── reading ─────────────────────────────────────────────────────────
@@ -481,20 +624,22 @@ module Semrember
     # The lexical Gram matrix depends on observations, never on the query
     # or their labels. Reuse its inverse until insertion/deletion/refitting.
     private def build_novelty_inverse : Array(Float64)
+      # With no static half, the full kernel and the lexical kernel are the
+      # same matrix.  Reuse the dual inverse instead of inverting it twice.
+      if @d_static == 0
+        return @a.not_nil!
+      end
       n = @train_feats.size
-      dt = @d_tfidf
-      lex = @train_feats.map { |f| f.dense(dt, @d_static)[0, dt] }
       gram = Array(Float64).new(n * n, 0_f64)
       n.times do |i|
         (i + 1).times do |j|
-          s = 0.0_f64
-          dt.times { |dd| s += lex[i][dd].to_f64 * lex[j][dd].to_f64 }
+          s = sparse_dot(@train_feats[i], @train_feats[j])
           gram[i * n + j] = s
           gram[j * n + i] = s
         end
       end
       n.times { |i| gram[i * n + i] += @rls_reg }
-      Linalg.invert(gram, n)
+      Linalg.inverse_spd(gram, n)
     end
 
     def label_count : Int32
@@ -525,17 +670,15 @@ module Semrember
       @train_keys.each_with_index { |k, i| hits << i if k == key }
       if hits.any?
         hits.each { |j| dual_overwrite(j, target) }
-        @ax = nil
         prune_labels
         return previous
       end
       f = encode(key)
       dual_insert(f, target)
+      novelty_insert(f) if @novelty_inverse
       @train_keys << key
       @train_y << target
       @train_feats << f
-      @ax = nil
-      @novelty_inverse = nil
       @stored = @train_keys.size.to_i32
       previous
     end
@@ -574,35 +717,36 @@ module Semrember
       @train_y = @train_y.map { |i| remap[i] }
     end
 
-    # Exact rank-1 replacement: W[v_new] += r_j, W[v_old] -= r_j.
+    # P_i = A_i,: X.  The lexical half is accumulated over sparse rows; the
+    # static half is a dense N×d_static product.  No N×D representer cache is
+    # needed.
+    private def p_row(i : Int32) : Array(Float64)
+      n = @train_keys.size
+      d = d_total
+      a = @a.not_nil!
+      p = Array(Float64).new(d, 0_f64)
+      n.times do |j|
+        aij = a[i * n + j]
+        next if aij == 0.0
+        f = @train_feats[j]
+        f.idx.each_with_index { |ix, k| p[ix] += aij * f.val[k].to_f64 }
+        f.st.each_with_index { |v, dd| p[@d_tfidf + dd] += aij * v.to_f64 }
+      end
+      p
+    end
+
+    # Exact rank-1 replacement: W[v_new] += P_j, W[v_old] -= P_j.
     private def dual_overwrite(j : Int32, target : Int32)
       return unless @a && @x
-      ax = @ax || (@ax = compute_ax)
       d = d_total
       old = @train_y[j]
       return if old == target
+      r = p_row(j)
       d.times do |dd|
-        r = ax[j * d + dd].to_f32
-        @w[target * d + dd] += r
-        @w[old * d + dd] -= r
+        @w[target * d + dd] += r[dd].to_f32
+        @w[old * d + dd] -= r[dd].to_f32
       end
       @train_y[j] = target
-    end
-
-    private def compute_ax : Array(Float64)
-      a = @a.not_nil!
-      x = @x.not_nil!
-      n = @train_keys.size
-      d = d_total
-      ax = Array(Float64).new(n * d, 0_f64)
-      n.times do |i|
-        d.times do |dd|
-          s = 0.0_f64
-          n.times { |j| s += a[i * n + j] * x[j * d + dd] }
-          ax[i * d + dd] = s
-        end
-      end
-      ax
     end
 
     # Exact rank-1 insert: Schur-complement growth of A and X.
@@ -652,20 +796,99 @@ module Semrember
       d.times { |dd| xn[n * d + dd] = xv[dd] }
       @a = an
       @x = xn
-      @ax = nil
+    end
+
+    # Keep a cached lexical novelty inverse in sync with a new observation.
+    # This is the Schur-complement growth used by dual_insert, but restricted
+    # to the lexical feature subspace.
+    private def novelty_insert(f : Features) : Nil
+      inv = @novelty_inverse
+      return unless inv
+      n = @train_feats.size
+      k = Array(Float64).new(n, 0_f64)
+      n.times { |i| k[i] = sparse_dot(@train_feats[i], f) }
+      u = Array(Float64).new(n, 0_f64)
+      n.times do |i|
+        s = 0.0_f64
+        n.times { |j| s += inv[i * n + j] * k[j] }
+        u[i] = s
+      end
+      l2 = 0.0_f64
+      f.idx.each_with_index { |_, a| v = f.val[a].to_f64; l2 += v * v }
+      sig = @rls_reg + l2
+      n.times { |i| sig -= k[i] * u[i] }
+      if sig <= 1e-12
+        @novelty_inverse = nil
+        return
+      end
+      an = Array(Float64).new((n + 1) * (n + 1), 0_f64)
+      n.times do |i|
+        n.times { |j| an[i * (n + 1) + j] = inv[i * n + j] + u[i] * u[j] / sig }
+        an[i * (n + 1) + n] = -u[i] / sig
+        an[n * (n + 1) + i] = -u[i] / sig
+      end
+      an[n * (n + 1) + n] = 1.0 / sig
+      @novelty_inverse = an
     end
 
     def delete(key : String) : Bool
       delete_many({key})
     end
 
-    # Remove every observation for the given keys and rebuild the writer once.
-    # Returns true if any observations were removed.
-    def delete_many(keys : Enumerable(String)) : Bool
-      raise UnavailableError.new("exact writes require a live dual writer; fit the original corpus first") unless writable?
-      removed = keys.to_set
-      return false if removed.empty?
+    # Delete one observation in place.  The inverse of the retained kernel is
+    # the inverse of the principal submatrix, so this is one outer product:
+    #   A' = A_RR - A_Ri A_iR / A_ii
+    # W receives the corresponding rank-one correction, and P_i is generated
+    # on demand from the sparse feature rows.
+    private def delete_one(i : Int32) : Bool
+      n = @train_keys.size
+      a = @a.not_nil!
+      aii = a[i * n + i]
+      return false if aii <= 1e-12
 
+      p_i = p_row(i)
+      t = rows
+      d = d_total
+      coef = Array(Float64).new(t, 0_f64)
+      coef[@train_y[i]] += 1.0
+      n.times do |r|
+        next if r == i
+        coef[@train_y[r]] += a[r * n + i] / aii
+      end
+      t.times do |c|
+        d.times do |dd|
+          @w[c * d + dd] = (@w[c * d + dd].to_f64 - coef[c] * p_i[dd]).to_f32
+        end
+      end
+
+      @a = Linalg.delete_principal(a, n, i)
+      if inv = @novelty_inverse
+        begin
+          @novelty_inverse = Linalg.delete_principal(inv, n, i)
+        rescue ArgumentError
+          @novelty_inverse = nil
+        end
+      end
+
+      x = @x.not_nil!
+      new_x = Array(Float64).new((n - 1) * d, 0_f64)
+      ri = 0
+      n.times do |r|
+        next if r == i
+        d.times { |dd| new_x[ri * d + dd] = x[r * d + dd] }
+        ri += 1
+      end
+      @x = new_x
+      @train_keys.delete_at(i)
+      @train_y.delete_at(i)
+      @train_feats.delete_at(i)
+      @stored = @train_keys.size
+      true
+    end
+
+    # Numerical fallback for a bad downdate.  This is the old full-rebuild
+    # path and should be rare.
+    private def rebuild_after_delete(removed : Set(String)) : Bool
       keep = [] of Int32
       @train_keys.each_with_index { |k, i| keep << i unless removed.includes?(k) }
       return false if keep.size == @train_keys.size
@@ -678,6 +901,26 @@ module Semrember
       dual_rebuild(encs, @train_y)
       @stored = keep.size.to_i32
       @novelty_inverse = nil
+      true
+    end
+
+    # Remove every observation for the given keys.  Each row is deleted with
+    # an exact rank-1 downdate; there is no refit unless a downdate becomes
+    # numerically unsafe.
+    def delete_many(keys : Enumerable(String)) : Bool
+      raise UnavailableError.new("exact writes require a live dual writer; fit the original corpus first") unless writable?
+      removed = keys.to_set
+      return false if removed.empty?
+
+      indices = [] of Int32
+      @train_keys.each_with_index { |k, i| indices << i if removed.includes?(k) }
+      return false if indices.empty?
+      indices.sort!.reverse!
+      indices.each do |i|
+        return rebuild_after_delete(removed) unless delete_one(i)
+      end
+      prune_labels
+      @stored = @train_keys.size
       true
     end
 

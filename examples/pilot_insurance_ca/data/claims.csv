@@ -1,0 +1,46 @@
+claim_note,action
+"Windshield chip from a rock on Highway 407. Comprehensive glass coverage. No other damage and no injuries.",fast_track_glass
+"Crack in the rear window after a branch fell. Glass-only claim. Vehicle is drivable.",fast_track_glass
+"Rock hit the windshield on the 401. Small chip. No collision damage.",fast_track_glass
+"Side mirror glass broken overnight in a parking lot. No body damage.",fast_track_glass
+"Ontario DCPD: rear-ended at a red light on Highway 401. Other driver admitted fault. Police report filed and photos uploaded.",assign_auto_collision
+"Parking lot collision in Toronto. Other driver backed into my door. Exchange of information completed.",assign_auto_collision
+"Alberta collision: hit a deer on Highway 2. Front bumper damaged. No injuries.",assign_auto_collision
+"Quebec no-fault: vehicle struck from behind in Montreal. No injuries. Joint report completed.",assign_auto_collision
+"Hit-and-run in Vancouver. Police report filed. Damage to rear quarter panel and tail light.",assign_auto_collision
+"Burst pipe flooded the basement of my home. Water reached the furnace and stored boxes.",assign_property_water
+"Sewer backup in the basement after heavy rain. Standing water and damaged drywall.",assign_property_water
+"Condo water damage: pipe in the unit above leaked through the ceiling.",assign_property_water
+"Washing machine hose failed and water damaged hardwood floors.",assign_property_water
+"Kitchen fire caused smoke damage throughout the house. Fire department attended.",assign_property_fire
+"Electrical fire in the garage. No injuries but significant smoke and water damage.",assign_property_fire
+"Wildfire embers damaged the roof and deck of our home in BC.",assign_property_fire
+"Commercial liability: customer slipped on a wet floor at our grocery store. Incident report completed.",assign_liability
+"Third-party liability claim: delivery driver damaged a customer's fence with the company van.",assign_liability
+"Slip and fall on an icy sidewalk at a rental property. Claimant reports a wrist injury.",assign_liability
+"Rear-ended on the 401. Neck and back pain. Ambulance attended and physiotherapy recommended.",assign_injury
+"Passenger in a collision reports whiplash and headaches. Medical reports attached.",assign_injury
+"Pedestrian struck in a crosswalk. Minor injuries treated at hospital.",assign_injury
+"Vehicle declared a total loss after a collision. Lienholder on file. Need settlement review.",assign_total_loss
+"Older SUV with 280000 km was written off after hail damage. Owner wants a buyout.",assign_total_loss
+"Fire destroyed the vehicle in the driveway. Total loss. Lien on the vehicle.",assign_total_loss
+"Three passengers in the same car all claim whiplash and attend the same rehab clinic. The bumper has no damage and their stories do not match.",refer_siu
+"Staged accident indicators: sudden braking on an empty road, two unrelated claimants, same clinic, no vehicle damage.",refer_siu
+"Claimant reported the same stolen watch twice under two different policy numbers.",refer_siu
+"Body shop estimate is three times the market rate and the claimant is related to the shop owner.",refer_siu
+"I want to claim damage to my car but I have no photos, no police report, and I cannot describe what happened.",request_more_info
+"Water damage claim with no photos and no receipts. Adjuster needs more information.",request_more_info
+"Claim for lost jewellery with no proof of ownership or police report.",request_more_info
+"I have called three times about my delayed settlement. If this is not resolved I will contact FSRA and my MPP.",escalate_complaint
+"Policyholder says they will contact the Ombudsman and their lawyer because the claim was denied.",escalate_complaint
+"Complaint about adjuster conduct. Customer requests a supervisor and mentions AMF.",escalate_complaint
+"Dental claim for a crown. Predetermination form attached. Plan member in Manitoba.",triage_health_dental
+"Paramedical claim for physiotherapy after a sports injury. Receipts attached.",triage_health_dental
+"Health benefit claim for prescription glasses. Vision care coverage.",triage_health_dental
+"Hail storm in Calgary damaged roof; hood and windows. Many neighbours are reporting the same damage.",assign_catastrophe_team
+"Wildfire evacuation in BC. Smoke and ash damage to home. Entire neighbourhood affected.",assign_catastrophe_team
+"Freezing rain caused widespread roof and siding damage across the region.",assign_catastrophe_team
+"Flood in southern Alberta affected many homes. CAT event likely.",assign_catastrophe_team
+"Assuré à Montréal: véhicule heurté par l'arrière. Pas de blessure. Constat amiable rempli.",assign_auto_collision
+"Dégât d'eau: tuyau éclaté au sous-sol. Aucun blessé.",assign_property_water
+"Plainte: le client menace de contacter l'AMF au sujet du retard.",escalate_complaint

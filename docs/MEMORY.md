@@ -166,7 +166,10 @@ mode preserves them and removes expired records before rebuilding the index.
 ## Cost of live memory
 
 The dual writer retains observation-space state that grows quadratically in
-the number of observations. Deletion rebuilds the solution. The first novelty
-query after an observation change builds and inverts a lexical Gram matrix;
-later queries reuse that inverse. A label-only overwrite does not require
-rebuilding the novelty inverse. Benchmark with your corpus and read/write mix.
+the number of observations. Deletion uses an exact principal-submatrix
+downdate rather than a full rebuild. Once the lexical novelty inverse has been
+built, insertion and deletion keep it in sync; with no static encoder it is the
+same inverse as the dual writer, so the first query is effectively free. A
+static-encoder model builds a separate lexical inverse on its first novelty
+query and then updates it incrementally. A label-only overwrite does not change
+either inverse. Benchmark with your corpus and read/write mix.

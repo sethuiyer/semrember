@@ -175,6 +175,28 @@ describe "memory update regressions" do
     end
   end
 
+  it "applies exact overwrites after a deletion" do
+    mem = Semrember::Memory.new.fit({"disk full" => "free_disk", "host down" => "fix_dns", "bad cert" => "renew"})
+    mem.delete("host down").should be_true
+    mem.set("disk full", "clear_cache").should eq "free_disk"
+    mem.query("disk full")[0][0].should eq "clear_cache"
+    mem.set("disk full", "free_disk").should eq "clear_cache"
+  end
+
+  it "computes novelty with a static encoder and survives deletion" do
+    with_test_encoder do |encoder_path|
+      encoder = Semrember::StaticEncoder.new(encoder_path)
+      mem = Semrember::Memory.new(static: encoder).fit({"disk" => "x", "host" => "y", "disk full" => "z"})
+      mem.novelty("disk").should be >= 0.0
+      mem.novelty("disk").should be <= 1.0
+      mem.delete("host").should be_true
+      mem.novelty("disk").should be >= 0.0
+      mem.set("disk", "w").should eq "x"
+      mem.query("disk")[0][0].should eq "w"
+      mem.writer_residual.should be < 1e-5
+    end
+  end
+
   it "handles zero-dimensional live observations without division by zero" do
     mem = Semrember::Memory.new(min_df: 100).fit({"a" => "x"})
     mem.set("b", "y").should be_nil
@@ -196,6 +218,57 @@ describe "memory update regressions" do
     mem.novelty("full disk").should be_close(old, 1e-10)
     mem.fit({"new corpus" => "n"})
     mem.novelty("new corpus").should be < 0.1
+  end
+
+  it "keeps feature coordinates frozen across live writes" do
+    mem = Semrember::Memory.new.fit({"disk full" => "x", "host down" => "y"})
+    before = mem.encode("disk full")
+    dimension = mem.d_tfidf
+    mem.set("brand new phrase qwerty", "x")
+    mem.delete("host down")
+    after = mem.encode("disk full")
+    mem.d_tfidf.should eq dimension
+    after.idx.should eq before.idx
+    after.val.should eq before.val
+  end
+
+  it "keeps W consistent through randomized exact mutations" do
+    rng = Random.new(7)
+    labels = ["free_disk", "fix_dns", "renew_certificate", "clear_cache"]
+    corpus = {
+      "disk full" => "free_disk",
+      "host down" => "fix_dns",
+      "bad cert" => "renew_certificate",
+      "slow dns" => "fix_dns",
+      "stale cache" => "clear_cache",
+    }
+    mem = Semrember::Memory.new.fit(corpus)
+    mem.novelty("disk full")
+    current = corpus.keys.dup
+    30.times do |step|
+      case rng.rand(4)
+      when 0
+        key = "inserted #{step} disk full"
+        mem.set(key, labels[rng.rand(labels.size)])
+        current << key
+      when 1
+        key = current[rng.rand(current.size)]
+        mem.set(key, labels[rng.rand(labels.size)])
+      when 2
+        next if current.size <= 1
+        key = current.delete_at(rng.rand(current.size))
+        mem.delete(key)
+      else
+        next if current.size <= 3
+        2.times do
+          key = current.delete_at(rng.rand(current.size))
+          mem.delete(key)
+        end
+      end
+      mem.novelty("disk full")
+      mem.writer_residual.should be < 1e-5
+    end
+    mem.writer_residual.should be < 1e-5
   end
 
   it "rejects negative limits and invalid regularization" do

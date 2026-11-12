@@ -1,0 +1,146 @@
+{
+  "fast_track_glass": {
+    "line": "auto",
+    "risk": "low",
+    "human_required": false,
+    "covers": "Glass-only claims: windshield chip, crack, side or rear glass, comprehensive glass coverage, no other damage and no injuries.",
+    "not_for": "Collision damage, frame damage, injury, total loss, fraud indicators, or a claim that also mentions body damage.",
+    "examples": [
+      "Rock chip on the windshield on Highway 407",
+      "Rear window cracked by a falling branch",
+      "Side mirror glass broken overnight"
+    ]
+  },
+  "assign_auto_collision": {
+    "line": "auto",
+    "risk": "medium",
+    "human_required": false,
+    "covers": "Collision or upset involving a vehicle: rear-end, parking lot, hit-and-run, animal strike, DCPD, no-fault, with photos and a police or joint report where available.",
+    "not_for": "Glass-only claims, injury claims, total loss, fraud indicators, or missing basic facts.",
+    "examples": [
+      "Ontario DCPD rear-end on the 401",
+      "Parking lot collision in Toronto",
+      "Hit-and-run in Vancouver with a police report"
+    ]
+  },
+  "assign_property_water": {
+    "line": "property",
+    "risk": "medium",
+    "human_required": false,
+    "covers": "Water damage to a home or condo: burst pipe, sewer backup, appliance leak, ceiling leak, flood damage to contents and structure.",
+    "not_for": "Auto water damage, fire damage, liability claims, or a CAT event affecting an entire neighbourhood.",
+    "examples": [
+      "Burst pipe flooded the basement",
+      "Sewer backup after heavy rain",
+      "Condo pipe leak through the ceiling"
+    ]
+  },
+  "assign_property_fire": {
+    "line": "property",
+    "risk": "high",
+    "human_required": true,
+    "covers": "Fire, smoke, soot, or firefighting water damage to a home or commercial property.",
+    "not_for": "Water-only losses, auto fires, wildfire CAT events affecting many homes, or liability claims.",
+    "examples": [
+      "Kitchen fire with smoke damage",
+      "Electrical fire in the garage",
+      "Wildfire embers damaged the roof and deck"
+    ]
+  },
+  "assign_liability": {
+    "line": "liability",
+    "risk": "high",
+    "human_required": true,
+    "covers": "Third-party bodily injury or property damage liability: slip and fall, customer injury, damage caused by the insured or an employee.",
+    "not_for": "First-party auto or property damage, glass claims, or claims with no third-party allegation.",
+    "examples": [
+      "Customer slipped on a wet floor at a grocery store",
+      "Delivery driver damaged a customer's fence",
+      "Slip and fall on an icy sidewalk"
+    ]
+  },
+  "assign_injury": {
+    "line": "auto",
+    "risk": "high",
+    "human_required": true,
+    "covers": "Any claim with a reported injury: whiplash, neck or back pain, ambulance attendance, physiotherapy, medical reports, or a pedestrian injury.",
+    "not_for": "Property-only or glass-only claims, or claims where the only injury is a pre-existing condition unrelated to the loss.",
+    "examples": [
+      "Rear-ended with neck and back pain",
+      "Passenger with whiplash and headaches",
+      "Pedestrian struck in a crosswalk"
+    ]
+  },
+  "assign_total_loss": {
+    "line": "auto",
+    "risk": "high",
+    "human_required": true,
+    "covers": "Vehicle write-off or total loss, including fire, flood, hail, or collision where repair is not economical; includes lienholder and buyout review.",
+    "not_for": "Repairable collision damage, glass-only claims, or a vehicle that has not been declared a total loss.",
+    "examples": [
+      "Vehicle declared a total loss with a lienholder",
+      "Older SUV written off after hail damage",
+      "Fire destroyed the vehicle in the driveway"
+    ]
+  },
+  "refer_siu": {
+    "line": "cross",
+    "risk": "high",
+    "human_required": true,
+    "covers": "Special investigation indicators: staged accident, inconsistent stories, no vehicle damage with injury claims, same clinic or passengers across claims, duplicate claims, inflated estimates, or a relationship with the repair shop.",
+    "not_for": "Ordinary collisions, glass claims, weather events, or a single suspicious detail without corroborating indicators.",
+    "examples": [
+      "Three passengers, same clinic, no bumper damage",
+      "Staged accident with sudden braking",
+      "Same stolen watch reported under two policies"
+    ]
+  },
+  "request_more_info": {
+    "line": "cross",
+    "risk": "low",
+    "human_required": false,
+    "covers": "The note is missing facts needed to route or decide: no photos, no police report, no receipts, no proof of ownership, or an unclear description of the loss.",
+    "not_for": "Claims with enough facts to route, or cases where the missing information is not required for the next step.",
+    "examples": [
+      "No photos and no police report",
+      "Water damage with no receipts",
+      "Lost jewellery with no proof of ownership"
+    ]
+  },
+  "escalate_complaint": {
+    "line": "cross",
+    "risk": "high",
+    "human_required": true,
+    "covers": "Complaints and regulatory or legal escalation: FSRA, AMF, BCFSA, Ombudsman, lawyer, MPP, supervisor request, or repeated unresolved service complaint.",
+    "not_for": "A normal claim update call or a request for information that is not a complaint.",
+    "examples": [
+      "Customer will contact FSRA and their MPP",
+      "Policyholder mentions the Ombudsman and a lawyer",
+      "Complaint about adjuster conduct"
+    ]
+  },
+  "triage_health_dental": {
+    "line": "health",
+    "risk": "low",
+    "human_required": false,
+    "covers": "Health and dental benefit claims: dental crown or predetermination, paramedical services, physiotherapy, vision care, prescription glasses.",
+    "not_for": "Auto injury claims, property damage, liability, or a complaint about a health claim decision.",
+    "examples": [
+      "Dental crown predetermination in Manitoba",
+      "Paramedical physiotherapy receipts",
+      "Vision care claim for prescription glasses"
+    ]
+  },
+  "assign_catastrophe_team": {
+    "line": "property",
+    "risk": "high",
+    "human_required": true,
+    "covers": "Catastrophe or mass event: hail, wildfire, flood, freezing rain, or a event affecting many homes or a whole neighbourhood.",
+    "not_for": "A single isolated property loss with no signs of a wider event.",
+    "examples": [
+      "Hail storm in Calgary with many neighbours affected",
+      "Wildfire evacuation in BC",
+      "Freezing rain across the region"
+    ]
+  }
+}

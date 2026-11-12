@@ -1,0 +1,10 @@
+[
+  {
+    "id": "new_sewer_backup",
+    "title": "Sewer backup with injury, missing photos, and complaint threat",
+    "province": "ON",
+    "product": "property",
+    "expected_route": "escalate_complaint",
+    "note": "My basement flooded after the city sewer backed up. The restoration company says it is contaminated water and my son has a rash from cleaning it. We have no photos because the water was pumped out. The city says it is not responsible. If someone does not call me today I will contact the Ombudsman and my MPP."
+  }
+]

@@ -6,7 +6,7 @@ PREFIX  ?= $(HOME)/.local
 DESTDIR ?=
 DX_PYTHON ?= python3
 
-.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke
+.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke pilot-insurance pilot-insurance-live pilot-test bench-writer
 
 all: cli server
 
@@ -44,6 +44,7 @@ parity: cli
 # `test` is what ships: no reference implementation required.
 test: spec
 	python3 -m unittest discover -s clients/python -p 'test_*.py'
+	python3 examples/pilot_insurance_ca/test_policy.py
 
 smoke:
 	python3 tools/http_smoke.py --server $(BUILD)/semrember-server --cli $(BUILD)/semrember
@@ -55,8 +56,22 @@ durable-smoke:
 dx-smoke:
 	python3 tools/dx_smoke.py --server $(BUILD)/semrember-server --cli $(BUILD)/semrember --python "$(DX_PYTHON)" --crystal "$(CRYSTAL)"
 
+# Canadian insurance FNOL triage pilot. Offline by default; the live target
+# calls TypeSafe System One and requires TYPESAFE_API_KEY or --key-file.
+pilot-insurance:
+	$(DX_PYTHON) examples/pilot_insurance_ca/demo.py
+
+pilot-insurance-live:
+	$(DX_PYTHON) examples/pilot_insurance_ca/demo.py --live
+
+pilot-test:
+	$(DX_PYTHON) examples/pilot_insurance_ca/test_policy.py
+
 bench: cli
 	AMEM=$(AMEM) $(CRYSTAL) run --release tools/bench.cr
+
+bench-writer:
+	$(CRYSTAL) run --release tools/bench_writer.cr
 
 # Static embedding models.  Not redistributed: fetched from the Hugging Face
 # hub and converted to the M2VE/M2VS format, verified by checksum.  No-op if

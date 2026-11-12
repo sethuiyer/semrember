@@ -77,6 +77,31 @@ describe "Linalg.invert" do
       end
     end
   end
+
+  it "matches Gauss-Jordan on an SPD system via Cholesky" do
+    m = [4.0, 1.0, 2.0, 0.5,
+         1.0, 3.0, 0.2, 1.0,
+         2.0, 0.2, 5.0, 0.3,
+         0.5, 1.0, 0.3, 2.0].flat_map { |r| r }
+    expected = Semrember::Linalg.invert(m, 4)
+    actual = Semrember::Linalg.cholesky_inverse(m, 4)
+    16.times { |i| actual[i].should be_close(expected[i], 1e-10) }
+  end
+
+  it "deletes a principal submatrix exactly" do
+    m = [4.0, 1.0, 2.0, 0.5,
+         1.0, 3.0, 0.2, 1.0,
+         2.0, 0.2, 5.0, 0.3,
+         0.5, 1.0, 0.3, 2.0].flat_map { |r| r }
+    a = Semrember::Linalg.invert(m, 4)
+    # Delete row/column 1, then invert the retained 3x3 block.
+    retained = [0, 2, 3].flat_map do |r|
+      [0, 2, 3].map { |c| m[r * 4 + c] }
+    end
+    expected = Semrember::Linalg.invert(retained, 3)
+    actual = Semrember::Linalg.delete_principal(a, 4, 1)
+    9.times { |i| actual[i].should be_close(expected[i], 1e-10) }
+  end
 end
 
 describe "Csv" do

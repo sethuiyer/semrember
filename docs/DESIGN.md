@@ -11,18 +11,37 @@
 | `dual` | `A` (`N×N`) | the same exact ridge solution in the kernel dual |
 
 `dual` is the default because it is cheaper whenever `N < D` — the regime
-this library targets — and because it supports **exact replacement**:
+this library targets — and because it supports **exact replacement**.
 
-```
-A₋ᵢ = A + u uᵀ / t,     t = 1 − xᵢᵀ A xᵢ
-```
+The Gram is built from sparse lexical features with a two-pointer dot product,
+plus the dense static half when an encoder is present.  The inverse comes from
+a Cholesky factorization, with Gauss-Jordan as a numerical fallback.  The
+classifier is formed as `W = (A Y)ᵀ X`, so the `N×D` representer matrix is not
+materialised.
 
-is a rank-1 downdate, so removing or replacing one observation is algebra
-rather than treating a replacement as a second observation. This port
-uses a rank-1 target update for replacement and a Schur-complement update
-for insertion. Deletion rebuilds the solution from retained observations.
-Attribution, counterfactual previews, and pruning APIs are not implemented
-in this port.
+Live mutations use exact algebra against the maintained inverse `A`:
+
+* insertion — Schur-complement growth of `A`;
+* label replacement — a rank-one update of `W` using the on-demand row
+  `P_i = A[i,:] X`;
+* deletion — the principal-submatrix inverse
+  `A' = A_RR − A_Ri A_iR / A_ii`, one outer product, followed by a rank-one
+  correction to `W`.
+
+Cholesky is the factorization used to build `A` initially and to rebuild it
+after a numerically unsafe downdate.  This version does not keep a Cholesky
+factor synchronized across every mutation; `A` is the live exact state.
+
+Deletion no longer rebuilds the solution.  The lexical novelty inverse is
+updated through the same insertion/deletion path, so the first novelty query
+after a write does not pay for a fresh factorization.  When no static encoder
+is present, the lexical inverse is the full inverse and is reused directly.
+
+The feature vocabulary and IDF weights stay fixed between fits.  Live writes
+use only features already in that vocabulary; a new key can update weights but
+cannot introduce new lexical coordinates.  This is why the incremental
+identities are valid across live writes.  Attribution, counterfactual previews,
+and pruning APIs are not implemented in this port.
 
 The update is exact for the regularized ridge objective; classification
 is still a learned prediction and can be affected by feature collisions.
@@ -128,6 +147,23 @@ which is why the 253 MB multilingual model costs 327 MB here and 115 MB
 there. If resident memory matters more than the last millisecond of load
 time, use the 15 MB model or the C library.
 
+### Incremental writer measurements
+
+Synthetic sparse lexical workload, `N=850`, `D=7,523`, `T=20`, `min_df=2`,
+on the development machine (`make bench-writer`):
+
+| operation | before | after |
+|---|---:|---:|
+| `fit` | 23.5 s | **2.2 s** |
+| first novelty | 3.6 s | **1 ms** |
+| delete one key | 22.9 s | **17 ms** |
+| delete 20 keys | 23.3 s | **313 ms** |
+
+The change is algorithmic, not a micro-optimization: sparse Gram construction,
+Cholesky instead of Gauss-Jordan, `W = (AY)ᵀX` instead of materialising `AX`,
+principal-submatrix deletion, and an incrementally maintained novelty inverse.
+AMEM bytes on the bundled incident corpus are unchanged.
+
 The engine is ~2,800 lines of Crystal plus ~2,600 generated table lines;
 the whole public repository is under 4,000 hand-written lines.
 
@@ -146,7 +182,7 @@ src/cli.cr              the command line front end
 src/csv.cr              RFC 4180 reader
 spec/                   engine, tokenizer, persistence and HTTP regressions
 clients/python/         the Python client
-tools/                  table generator, model fetcher, parity harness, benchmark
+tools/                  table generator, model fetcher, parity harness, benchmarks
 ```
 
 ## Format
