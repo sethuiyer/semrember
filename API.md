@@ -208,14 +208,16 @@ telemetry, not trusted security state. The response includes:
   "novelty": 0.86, "verdict": "suspicious",
   "flipped": [{"query": "unknown", "old": "fix_dns", "new": "free_disk",
                "cosine_to_key": 0.492}],
-  "cumulative": {"query_corpus": 5, "suspicious_writes": 1,
-                 "suspicion_sum": 0.508, "verdict": "clean"}
+  "cumulative": {"kind": "heuristic_drift", "query_corpus": 5,
+                 "suspicious_writes": 1, "suspicion_sum": 0.508,
+                 "verdict": "clean"}
 }}
 ```
 
 `reject_suspicious: true` returns HTTP 409 and does not write when the verdict
-is `suspicious` or the recent cumulative count is at least 3. The check is a
-model-sensitivity signal, not proof of malicious intent.
+is `suspicious` or the recent heuristic drift count is at least 3. The
+`cumulative` object is a heuristic drift signal, not a detection guarantee.
+The check is model-sensitivity telemetry, not proof of malicious intent.
 
 ---
 

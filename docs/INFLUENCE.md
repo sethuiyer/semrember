@@ -292,7 +292,8 @@ The poison check is a diagnostic, not an access-control boundary.
   lower the dissimilarity signal.
 - A single clean write does not prove absence of cumulative drift.
 - The server keeps a short history of recent poison checks and treats three
-  `suspicious` verdicts in the recent window as cumulative suspicion.
+  `suspicious` verdicts in the recent window as a **heuristic cumulative drift
+  signal**, not a detection guarantee.
 - It does not replace provenance, rate limits, review, or a trust boundary on
   writers.
 - It measures model sensitivity, not malicious intent.

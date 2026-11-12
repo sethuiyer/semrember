@@ -619,6 +619,7 @@ module Semrember
       end
       j.field "cumulative" do
         j.object do
+          j.field "kind", "heuristic_drift"
           j.field "query_corpus", query_count
           j.field "suspicious_writes", cumulative_suspicious
           j.field "suspicion_sum", cumulative_suspicion
