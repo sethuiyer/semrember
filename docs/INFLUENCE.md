@@ -232,13 +232,13 @@ With `-Dlapack`, Q=200 synthetic queries:
 |---:|---:|---:|---:|---:|---:|---:|---:|
 | 1,000 | 1.1 s | 0.42 s | 0.28 s | 0.11 s | 0.9 ms | 18.2 s (direct) | 43.8× |
 | 2,000 | 5.5 s | 1.03 s | 0.57 s | 0.43 s | 1.8 ms | 61.2 s (direct) | 59.7× |
-| 4,000 | 34 s | 2.88 s | 1.08 s | 1.72 s | 3.9 ms | 306 s (estimated) | 106× |
+| 4,000 | 35 s | 3.00 s | 1.18 s | 1.74 s | 4.5 ms | 295 s (direct) | 98.3× |
 | 6,000 | 102 s | 5.77 s | 1.64 s | 3.99 s | 7.6 ms | 1,119 s (estimated) | 194× |
 
-The 1k and 2k rows use a direct full naive delete-and-query run. The 4k and 6k
-rows extrapolate from ten exact delete-and-query measurements because a full
-naive run becomes impractical. The speedup grows with N because the shortcut
-removes the per-memory mutation.
+The 1k, 2k, and 4k rows use a direct full naive delete-and-query run. The 6k
+row extrapolates from a ten-memory sample because a full naive run takes about
+19 minutes. The speedup grows with N because the shortcut removes the
+per-memory mutation.
 
 ## Retention experiment
 
