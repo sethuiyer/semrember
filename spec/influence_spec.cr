@@ -142,6 +142,52 @@ describe "leave-one-out influence" do
     end
   end
 
+  it "flags a pivotal write with low query similarity" do
+    mem = Semrember::Memory.new.fit({
+      "disk full" => "free_disk", "no space left" => "free_disk",
+      "host down" => "fix_dns", "dns timeout" => "fix_dns",
+      "cert expired" => "renew_cert", "x509 expired" => "renew_cert",
+      "cache stale" => "clear_cache", "stale cache entry" => "clear_cache",
+    })
+    queries = ["disk full", "cert expired", "cache stale", "dns timeout", "unknown"]
+    benign = mem.poison_check("cache stale variant", "clear_cache", queries)
+    benign.verdict.should eq "clean"
+    suspicious = mem.poison_check("oom network slow 33", "free_disk", queries)
+    suspicious.pivotal_queries.should be > 0
+    suspicious.suspicion.should be > 0.3
+    suspicious.verdict.should_not eq "clean"
+    suspicious.flipped.each { |f| f.query.should be_a(String) }
+  end
+
+  it "compacts only when the group deletion preserves decisions" do
+    rng = Random.new(31)
+    corpus = random_corpus(rng, 24)
+    mem = Semrember::Memory.new.fit(corpus)
+    queries = random_queries(rng, corpus, 15)
+    before = queries.map { |q| mem.query(q, 1)[0]?.try(&.[0]) }
+    labels_before = mem.labels.dup
+    result = mem.compact(queries, 0.0, coverage_floor: 0, keep_per_label: 1, verify: true)
+    mem.stored.should eq result.kept
+    if result.verified
+      after = queries.map { |q| mem.query(q, 1)[0]?.try(&.[0]) }
+      after.should eq before
+    else
+      result.pruned.should eq 0
+    end
+    (labels_before - mem.labels).should be_empty
+  end
+
+  it "respects pinned keys and coverage floors" do
+    rng = Random.new(37)
+    corpus = random_corpus(rng, 18)
+    mem = Semrember::Memory.new.fit(corpus)
+    queries = random_queries(rng, corpus, 10)
+    pinned = corpus.keys.first
+    result = mem.compact(queries, 1.0, coverage_floor: 0, pin: [pinned], keep_per_label: 1, verify: true)
+    mem.memory_keys.should contain pinned
+    result.kept.should be > 0
+  end
+
   it "reports empty results without queries" do
     mem = Semrember::Memory.new.fit({"disk full" => "x", "host down" => "y"})
     results = mem.banzhaf_influence([] of String)

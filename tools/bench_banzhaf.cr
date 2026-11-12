@@ -45,18 +45,34 @@ def run(n : Int32, q_count : Int32 = 200)
   results = mem.banzhaf_influence(queries, 0, profile)
   total_ms = (Time.monotonic - t0).total_milliseconds
 
-  # Naive exact-delete-and-query on a sample.  Extrapolate to N.
+  # Naive exact-delete-and-query.  Full mode is only practical for small N.
   keys = mem.memory_keys
-  sample = {10, n}.min
-  t0 = Time.monotonic
-  sample.times do |i|
-    copy = mem.duplicate_for_influence
-    copy.delete(keys[i])
-    queries.each { |q| copy.query(q, 1) }
+  full_naive = ARGV.includes?("--full-naive")
+  naive_sample_ms = 0.0
+  sample = 0
+  if full_naive
+    t0 = Time.monotonic
+    n.times do |i|
+      copy = mem.duplicate_for_influence
+      copy.delete(keys[i])
+      queries.each { |q| copy.query(q, 1) }
+    end
+    naive_full_ms = (Time.monotonic - t0).total_milliseconds
+    naive_per_memory_ms = naive_full_ms / n
+    naive_est_ms = naive_full_ms
+  else
+    sample = {10, n}.min
+    t0 = Time.monotonic
+    sample.times do |i|
+      copy = mem.duplicate_for_influence
+      copy.delete(keys[i])
+      queries.each { |q| copy.query(q, 1) }
+    end
+    naive_sample_ms = (Time.monotonic - t0).total_milliseconds
+    naive_per_memory_ms = naive_sample_ms / sample
+    naive_est_ms = naive_per_memory_ms * n
+    naive_full_ms = 0.0
   end
-  naive_sample_ms = (Time.monotonic - t0).total_milliseconds
-  naive_per_memory_ms = naive_sample_ms / sample
-  naive_est_ms = naive_per_memory_ms * n
 
   t = mem.label_count
   a_mb = n.to_f64 * n.to_f64 * 8 / 1024.0 / 1024.0
@@ -71,12 +87,19 @@ def run(n : Int32, q_count : Int32 = 200)
   puts "  throughput: #{(q_count / (total_ms / 1000.0)).round(1)} q/s, " \
        "#{(n / (total_ms / 1000.0)).round(1)} memory/s, " \
        "#{((n.to_f64 * q_count) / (total_ms / 1000.0) / 1e6).round(2)} M pairs/s"
-  puts "  naive delete+query: sample #{sample} = #{naive_sample_ms.round(0)}ms, " \
-       "per-memory #{naive_per_memory_ms.round(2)}ms, est total #{naive_est_ms.round(0)}ms " \
-       "(speedup #{(naive_est_ms / total_ms).round(1)}x)"
+  if full_naive
+    puts "  naive delete+query: FULL #{naive_full_ms.round(0)}ms, " \
+         "per-memory #{naive_per_memory_ms.round(2)}ms " \
+         "(speedup #{(naive_est_ms / total_ms).round(1)}x)"
+  else
+    puts "  naive delete+query: sample #{sample} = #{naive_sample_ms.round(0)}ms, " \
+         "per-memory #{naive_per_memory_ms.round(2)}ms, est total #{naive_est_ms.round(0)}ms " \
+         "(speedup #{(naive_est_ms / total_ms).round(1)}x)"
+  end
   puts "  dense arrays: A=#{a_mb.round(1)}MiB K=#{k_mb.round(1)}MiB Z=#{z_mb.round(1)}MiB B=#{b_mb.round(1)}MiB"
   puts "  top mean influence: #{results.sort_by { |r| -r.mean_influence }.first(3).map { |r| "#{r.key}=#{r.mean_influence.round(3)}" }.join(", ")}"
 end
 
-sizes = ARGV.empty? ? [1000] : ARGV.map(&.to_i)
+sizes = ARGV.reject(&.starts_with?("--")).map(&.to_i)
+sizes = [1000] if sizes.empty?
 sizes.each { |n| run(n) }

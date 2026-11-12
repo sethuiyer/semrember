@@ -43,6 +43,47 @@ module Semrember
     end
   end
 
+  struct PoisonFlip
+    getter query : String
+    getter old_label : String
+    getter new_label : String
+    getter cosine : Float64
+
+    def initialize(@query, @old_label, @new_label, @cosine)
+    end
+  end
+
+  struct PoisonCheckResult
+    getter suspicion : Float64
+    getter pivotal_queries : Int32
+    getter dissimilar_pivots : Int32
+    getter novelty : Float64
+    getter verdict : String
+    getter flipped : Array(PoisonFlip)
+    getter a_ii : Float64
+    getter unstable : Bool
+
+    def initialize(@suspicion, @pivotal_queries, @dissimilar_pivots,
+                   @novelty, @verdict, @flipped, @a_ii, @unstable)
+    end
+  end
+
+  # Result of a conservative compaction pass.
+  struct CompactResult
+    getter kept : Int32
+    getter pruned : Int32
+    getter verified : Bool
+    getter changed_queries : Int32
+    getter pinned_kept : Int32
+    getter coverage_kept : Int32
+    getter label_kept : Int32
+    getter pruned_keys : Array(String)
+
+    def initialize(@kept, @pruned, @verified, @changed_queries,
+                   @pinned_kept, @coverage_kept, @label_kept, @pruned_keys)
+    end
+  end
+
   # Optional phase timings for the influence pipeline.
   class BanzhafProfile
     property encode_ms = 0.0
@@ -269,6 +310,233 @@ module Semrember
       fast = Array(Float64).new(t) { |c| base[c] + delta[c] }
       exact = exact_leave_one_out_scores(q, i)
       InfluenceTerms.new(diag, z[i], bi, ci, base, delta, fast, exact, false)
+    end
+
+    # Counterfactual poisoning check for a proposed PUT.
+    #
+    # The write is applied to a copy.  The new observation's influence is then
+    # evaluated against the query corpus.  A legitimate memory should be
+    # pivotal mainly for queries similar to itself; a poisoned memory that
+    # flips dissimilar queries gets a high suspicion score.
+    #
+    # This is a model-sensitivity signal, not proof of malicious intent.
+    def poison_check(key : String, label : String, queries : Array(String),
+                     suspicion_threshold : Float64 = 0.5,
+                     novelty_threshold : Float64 = 0.8,
+                     dissimilar_cosine : Float64 = 0.3) : PoisonCheckResult
+      raise ArgumentError.new("queries must not be empty") if queries.empty?
+
+      novelty = novelty(key)
+      copy = duplicate_for_influence
+      before_size = copy.stored
+      copy.set(key, label)
+      index = copy.memory_keys.index(key)
+      raise ArgumentError.new("proposed key was not inserted") unless index
+      n = copy.stored
+      t = copy.label_count
+      a = copy.@a.not_nil!
+      diag = a[index * n + index]
+      floor = influence_diag_floor(a, n)
+      unstable = diag <= floor
+
+      qfeats = queries.map { |q| copy.encode(q) }
+      f_new = copy.@train_feats[index]
+      q_count = queries.size
+      k = Array(Float64).new(n * q_count, 0_f64)
+      n.times do |j|
+        g = copy.@train_feats[j]
+        q_count.times do |qq|
+          k[j * q_count + qq] = influence_feature_dot(g, qfeats[qq])
+        end
+      end
+      z = Array(Float64).new(q_count, 0_f64)
+      row = Array(Float64).new(n) { |j| a[index * n + j] }
+      q_count.times do |qq|
+        sum = 0.0_f64
+        n.times { |j| sum += row[j] * k[j * q_count + qq] }
+        z[qq] = sum
+      end
+      b_row = Array(Float64).new(t, 0_f64)
+      n.times { |j| b_row[copy.@train_y[j]] += row[j] }
+      b = Array(Float64).new(n * t, 0_f64)
+      n.times do |ii|
+        n.times do |j|
+          b[ii * t + copy.@train_y[j]] += a[ii * n + j]
+        end
+      end
+      scores = influence_scores(b, k, n, t, q_count)
+      c = Array(Float64).new(t, 0_f64)
+      t.times { |cc| c[cc] = b_row[cc] / diag } unless unstable
+
+      pivotal = 0
+      dissimilar = 0
+      suspicion_sum = 0.0_f64
+      flipped = [] of PoisonFlip
+      q_count.times do |qq|
+        base = Array(Float64).new(t) { |cc| scores[cc * q_count + qq] }
+        if unstable
+          base = copy.scores64(queries[qq])
+          alt = copy.leave_one_out_scores(queries[qq], index)
+        else
+          zi = z[qq]
+          alt = Array(Float64).new(t) { |cc| base[cc] - zi * c[cc] }
+        end
+        old_winner = argmax_index_for_poison(base)
+        new_winner = argmax_index_for_poison(alt)
+        next if old_winner == new_winner
+        pivotal += 1
+        cosine = influence_feature_dot(f_new, qfeats[qq])
+        suspicion_sum += 1.0 - cosine
+        dissimilar += 1 if cosine < dissimilar_cosine
+        if flipped.size < 5
+          flipped << PoisonFlip.new(queries[qq], copy.labels[old_winner], copy.labels[new_winner], cosine)
+        end
+      end
+
+      suspicion = pivotal == 0 ? 0.0 : suspicion_sum / pivotal
+      verdict = if pivotal == 0
+                  "clean"
+                elsif suspicion >= suspicion_threshold &&
+                      (novelty >= novelty_threshold || dissimilar >= 2)
+                  "suspicious"
+                elsif suspicion >= suspicion_threshold * 0.6
+                  "uncertain"
+                else
+                  "clean"
+                end
+      PoisonCheckResult.new(suspicion, pivotal, dissimilar, novelty, verdict, flipped, diag, unstable)
+    end
+
+    private def influence_feature_dot(a : Features, b : Features) : Float64
+      s = sparse_dot(a, b)
+      if @d_static > 0
+        @d_static.times { |dd| s += a.st[dd].to_f64 * b.st[dd].to_f64 }
+      end
+      s
+    end
+
+    private def argmax_index_for_poison(scores : Array(Float64)) : Int32
+      winner = 0
+      best = scores[0]
+      (1...scores.size).each do |c|
+        if scores[c] > best
+          best = scores[c]
+          winner = c
+        end
+      end
+      winner
+    end
+
+    # Conservative counterfactual compaction.
+    #
+    # Removes keys whose every observation has beta <= threshold, unless the
+    # key is pinned, covers at least `coverage_floor` queries as the nearest
+    # memory, or is needed to keep `keep_per_label` memories for its label.
+    #
+    # Zero-beta is a leave-one-out property, not a group property.  The
+    # default `verify: true` applies the proposed deletion to a copy and
+    # aborts if any query decision changes.
+    def compact(queries : Array(String), beta_threshold : Float64 = 0.0,
+                coverage_floor : Int32 = 0, pin : Array(String) = [] of String,
+                keep_per_label : Int32 = 1, verify : Bool = true) : CompactResult
+      n = @train_keys.size
+      return CompactResult.new(n, 0, true, 0, 0, 0, 0, [] of String) if n == 0 || queries.empty?
+
+      results = banzhaf_influence(queries, 0)
+      by_key = Hash(String, Array(InfluenceResult)).new
+      results.each { |r| (by_key[r.key] ||= [] of InfluenceResult) << r }
+
+      frequency = Hash(String, Int32).new(0)
+      queries.each do |q|
+        hit = similar(q, 1)[0]?
+        frequency[hit[0]] += 1 if hit
+      end
+
+      pinned = pin.to_set
+      key_label = Hash(String, String).new
+      @train_keys.each_with_index do |key, i|
+        key_label[key] ||= @labels[@train_y[i]]
+      end
+
+      candidates = Set(String).new
+      by_key.each do |key, rows|
+        next if pinned.includes?(key)
+        next if frequency[key]? && frequency[key] >= coverage_floor && coverage_floor > 0
+        next unless rows.all? { |r| r.banzhaf <= beta_threshold }
+        candidates << key
+      end
+
+      # Keep at least `keep_per_label` keys per label.
+      candidates_by_label = Hash(String, Array(InfluenceResult)).new
+      by_key.each do |key, rows|
+        next unless candidates.includes?(key)
+        label = key_label[key]? || ""
+        (candidates_by_label[label] ||= [] of InfluenceResult) << rows.first
+      end
+      kept_by_label = Hash(String, Int32).new(0)
+      by_key.each_key do |key|
+        next if candidates.includes?(key)
+        label = key_label[key]? || ""
+        kept_by_label[label] = (kept_by_label[label]? || 0) + 1
+      end
+      label_kept = 0
+      candidates_by_label.each do |label, rows|
+        need = keep_per_label - (kept_by_label[label]? || 0)
+        next if need <= 0
+        rows.sort_by! { |r| -r.mean_influence }
+        rows.first(need).each do |r|
+          if candidates.delete(r.key)
+            label_kept += 1
+          end
+        end
+      end
+
+      if candidates.empty?
+        return CompactResult.new(n, 0, true, 0, pinned.size, 0, label_kept, [] of String)
+      end
+
+      ordered = candidates.to_a.sort_by { |key| by_key[key].min_of { |r| r.mean_influence } }
+      if verify
+        before = queries.map { |q| query(q, 1)[0]?.try(&.[0]) }
+        trials = [0]
+        pruned_keys = compact_batch(ordered, queries, before, trials, max_trials: 64)
+      else
+        pruned_keys = ordered
+        delete_many(pruned_keys)
+      end
+      CompactResult.new(@train_keys.size, pruned_keys.size, true, 0,
+        pinned.size, frequency.count { |_, v| coverage_floor > 0 && v >= coverage_floor },
+        label_kept, pruned_keys)
+    end
+
+    # Delete a batch only if it preserves the current decisions.  Failed
+    # batches are split; this catches the fact that zero beta is not
+    # compositional over groups.
+    private def compact_batch(keys : Array(String), queries : Array(String),
+                              before : Array(String?), trials : Array(Int32),
+                              max_trials : Int32) : Array(String)
+      return [] of String if keys.empty? || trials[0] >= max_trials
+      trials[0] += 1
+      if compact_batch_safe?(keys, queries, before)
+        delete_many(keys)
+        return keys
+      end
+      return [] of String if keys.size == 1
+      mid = keys.size // 2
+      left = compact_batch(keys[0...mid], queries, before, trials, max_trials)
+      right = compact_batch(keys[mid..], queries, before, trials, max_trials)
+      left + right
+    end
+
+    private def compact_batch_safe?(keys : Array(String), queries : Array(String),
+                                    before : Array(String?)) : Bool
+      copy = duplicate_for_influence
+      return false unless copy.delete_many(keys)
+      queries.each_with_index do |q, idx|
+        after = copy.query(q, 1)[0]?.try(&.[0])
+        return false unless after == before[idx]
+      end
+      true
     end
 
     # Ridge leverage h_i = 1 - λ A_ii.  Useful as a baseline retention score.

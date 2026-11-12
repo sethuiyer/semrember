@@ -6,7 +6,7 @@ PREFIX  ?= $(HOME)/.local
 DESTDIR ?=
 DX_PYTHON ?= python3
 
-.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke pilot-insurance pilot-insurance-live pilot-test bench-writer verify-sparse-x influence-test banzhaf-mc bench-banzhaf pokemon-banzhaf retention
+.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke pilot-insurance pilot-insurance-live pilot-test bench-writer verify-sparse-x influence-test banzhaf-mc bench-banzhaf pokemon-banzhaf retention poison-check compact-pilot
 
 all: cli server
 
@@ -93,6 +93,16 @@ pokemon-banzhaf:
 
 retention:
 	$(CRYSTAL) run --release tools/retention_experiment.cr -- $(POKEMON_CSV)
+
+poison-check:
+	$(CRYSTAL) run --release examples/poison_check.cr
+
+COMPACT_CSV ?= $(HOME)/Documents/Documents/Workspace/Datasets/BBC_News_Article_Train.csv
+COMPACT_TEXT ?= text
+COMPACT_LABEL ?= category
+COMPACT_ROWS ?= 1200
+compact-pilot:
+	$(CRYSTAL) run --release tools/compact_experiment.cr -- $(COMPACT_CSV) --text-col $(COMPACT_TEXT) --label-col $(COMPACT_LABEL) --max-rows $(COMPACT_ROWS) --queries 100 --coverage-floor 2
 
 # Static embedding models.  Not redistributed: fetched from the Hugging Face
 # hub and converted to the M2VE/M2VS format, verified by checksum.  No-op if

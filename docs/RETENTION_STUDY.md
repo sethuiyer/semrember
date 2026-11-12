@@ -94,6 +94,58 @@ variants even though `mooshikachu` was inserted as a new memory. Memories are
 not additive players; the dual inverse couples them. This is why “similar to
 many queries” and “high norm” are not substitutes for decision power.
 
+## Real corpora: BBC News and Twitter sentiment
+
+The Pokémon results are a weak testbed. The same protocol was run on two real
+text corpora.
+
+### BBC News (5 classes, train N=960, test 240)
+
+Selected decision agreement:
+
+| K | random | frequency | leverage | Banzhaf | hybrid |
+|---:|---:|---:|---:|---:|---:|
+| 20 | 0.692 | 0.425 | 0.613 | 0.212 | 0.429 |
+| 40 | 0.800 | **0.929** | 0.562 | 0.642 | 0.683 |
+| 80 | 0.879 | **0.963** | 0.708 | 0.950 | 0.950 |
+| 120 | 0.929 | 0.975 | 0.713 | **0.979** | 0.929 |
+| 200 | 0.967 | 0.988 | 0.771 | 0.983 | 0.979 |
+| 300 | 0.988 | 1.000 | 0.946 | 0.996 | 1.000 |
+| 500 | 0.996 | 1.000 | 0.983 | 1.000 | 1.000 |
+
+Frequency wins at small/mid budgets. Banzhaf wins narrowly at K=120 and ties at
+larger K. Recency and random are strong baselines. The hypothesis is not
+confirmed as a universal rule.
+
+### Twitter airline sentiment (3 classes, train N=800, test 200)
+
+Selected decision agreement:
+
+| K | random | frequency | leverage | Banzhaf | hybrid |
+|---:|---:|---:|---:|---:|---:|
+| 20 | 0.795 | **0.785** | 0.200 | 0.160 | 0.295 |
+| 40 | 0.770 | **0.800** | 0.685 | 0.400 | 0.335 |
+| 80 | **0.835** | 0.830 | 0.705 | 0.750 | 0.395 |
+| 120 | 0.865 | 0.830 | 0.755 | 0.625 | 0.545 |
+| 200 | 0.845 | 0.860 | 0.830 | 0.570 | 0.775 |
+| 400 | 0.920 | 0.890 | 0.890 | 0.785 | 0.905 |
+| 500 | 0.910 | 0.895 | 0.890 | **0.935** | 0.920 |
+
+This is a strong negative result for “Banzhaf everywhere.” Banzhaf is the worst
+or near-worst strategy for most budgets and only wins at K=500. Frequency,
+recency, and random are better on this corpus.
+
+### What this means
+
+The retention hypothesis is **false as a universal statement**. The useful
+claim is narrower:
+
+> Decision power is a useful retention signal on some corpora and budgets. It
+> is not a replacement for frequency, recency, or held-out evaluation.
+
+The right production policy is a hybrid determined by measurement, not a single
+importance score.
+
 ## Limitations
 
 - The Pokémon corpus is a weak testbed. Names are arbitrary strings; held-out

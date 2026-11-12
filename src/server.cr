@@ -35,7 +35,8 @@ module Semrember
 
     def initialize(model : String?, static : String?, train : String? = nil,
                    key_col : String = "message", val_col : String = "action",
-                   data : String? = nil, encryption_key : Bytes? = nil)
+                   data : String? = nil, encryption_key : Bytes? = nil,
+                   min_counter : Int64 = 0)
       raise ArgumentError.new("--model and --train are mutually exclusive") if model && train
       raise ArgumentError.new("data and encryption_key must be supplied together") unless data.nil? == encryption_key.nil?
       raise ArgumentError.new("durable mode cannot be combined with --model or --train") if data && (model || train)
@@ -63,7 +64,7 @@ module Semrember
       end
       if data
         encoder_id = encoder.try { |e| "#{e.tokenizer}:#{e.dim}:#{e.fingerprint}" }
-        store = EncryptedStore.new(data, encryption_key.not_nil!, encoder_id)
+        store = EncryptedStore.new(data, encryption_key.not_nil!, encoder_id, min_counter)
         @store = store
         begin
           snapshot_existed = store.exists?

@@ -55,6 +55,29 @@ changed ciphertext and truncated files fail startup, without resetting the store
 Uncommitted temporary files are never loaded; a hard kill may leave encrypted
 temporary files that can be removed while the service is stopped.
 
+## Rollback floor
+
+Snapshots carry a monotonic commit counter (payload version 3). Each successful
+commit increments it. On startup, pass the last counter you trust from outside
+the snapshot:
+
+```bash
+semrember-server --data private-state/state.enc \
+  --encryption-key-file private-state/secret.key \
+  --min-counter 42
+```
+
+A snapshot whose counter is below `--min-counter` is rejected with
+`snapshot rollback detected`. This detects an attacker who replaces the snapshot
+with an older valid file, but only if the minimum comes from trusted state the
+attacker cannot rewrite. Store it in your orchestrator, KMS, deployment config,
+or a separate audited store. A counter kept only beside the snapshot is not a
+rollback defense.
+
+The counter is inside the authenticated ciphertext, so it cannot be edited
+without the key. Counter gaps are allowed after a failed commit. Omitting
+`--min-counter` keeps the previous behavior and accepts any valid snapshot.
+
 Snapshots contain all exact keys, values and UTC deadlines. Deletion removes
 records from the next snapshot; it does not securely erase old filesystem blocks
 or backups. Expiration remains lazy during operation and is also applied at boot.
@@ -74,9 +97,10 @@ The compatibility spec decrypts a fixture produced by the official Etebase JS
 CryptoManager (`etebase@0.43.0`) with this context and additional data.
 
 Wire format: `SMRENC01` (8 bytes) || nonce (24 bytes) || ciphertext || tag (16 bytes).
-Plaintext: JSON `{version: 2, encoder: null | "Tokenizer:dim:sha256", records:
-{key: value}, expiry: {key: unix_ms}}`. Version 1 snapshots are accepted and
-upgraded on the next successful write. The total snapshot size is limited to
+Plaintext: JSON `{version: 3, counter: N, encoder: null | "Tokenizer:dim:sha256",
+records: {key: value}, expiry: {key: unix_ms}}`. Version 1 and 2 snapshots are
+accepted; version 2 is upgraded on the next successful write, and version 1/2
+snapshots report counter 0. The total snapshot size is limited to
 64 MiB. Unsupported versions are rejected.
 
 References: [Etebase crypto primitives](https://docs.etebase.com/protocol-specs/introduction),

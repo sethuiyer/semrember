@@ -17,21 +17,25 @@ module Semrember
 
   class EncryptedStore
     MAGIC          = "SMRENC01"
-    FORMAT_VERSION = 2
+    FORMAT_VERSION = 3
     MAX_BYTES      = 64 * 1024 * 1024
 
     getter encoder_upgrade_pending : Bool
+    getter counter : Int64
 
     @key : Bytes
     @lock_file : File
     @failed = false
     @closed = false
 
-    def initialize(@path : String, key : Bytes, @encoder_id : String? = nil)
+    def initialize(@path : String, key : Bytes, @encoder_id : String? = nil,
+                   @min_counter : Int64 = 0)
       raise ArgumentError.new("encryption key must contain exactly 32 random bytes") unless key.size == 32
+      raise ArgumentError.new("minimum counter must be nonnegative") if @min_counter < 0
       raise PersistenceError.new("libsodium initialization failed") if LibStoreSodium.sodium_init < 0
       @key = Bytes.new(32)
       @encoder_upgrade_pending = false
+      @counter = 0_i64
       begin
         check LibStoreSodium.crypto_kdf_derive_from_key(@key, 32, 1_u64, "SemrStor".to_slice, key)
       rescue ex
@@ -68,7 +72,10 @@ module Semrember
     def load : Tuple(Hash(String, String), Hash(String, Time))
       ensure_healthy!
       @encoder_upgrade_pending = false
-      return {Hash(String, String).new, Hash(String, Time).new} unless File.exists?(@path)
+      unless File.exists?(@path)
+        @counter = @min_counter
+        return {Hash(String, String).new, Hash(String, Time).new}
+      end
 
       # Read through a single open descriptor and read exactly the size that was
       # checked. A concurrent replacement cannot make us allocate an unbounded
@@ -100,8 +107,20 @@ module Semrember
         raise PersistenceError.new("invalid snapshot payload")
       end
       version = object["version"].as_i
-      raise PersistenceError.new("unsupported snapshot payload version") unless version == 1 || version == 2
+      raise PersistenceError.new("unsupported snapshot payload version") unless version == 1 || version == 2 || version == 3
       hash = object.as_h
+      counter = if hash.has_key?("counter")
+                  hash["counter"].as_i64
+                elsif version >= 3
+                  raise PersistenceError.new("snapshot is missing counter metadata")
+                else
+                  0_i64
+                end
+      raise PersistenceError.new("snapshot has a negative counter") if counter < 0
+      if counter < @min_counter
+        raise PersistenceError.new("snapshot rollback detected: counter #{counter} is below minimum #{@min_counter}")
+      end
+      @counter = counter
       has_encoder = hash.has_key?("encoder")
       raise PersistenceError.new("snapshot is missing encoder metadata") if version >= 2 && !has_encoder
       if has_encoder
@@ -134,8 +153,10 @@ module Semrember
 
     def save(records : Hash(String, String), expiry : Hash(String, Time)) : Nil
       ensure_healthy!
+      next_counter = @counter + 1
       json = {
         version: FORMAT_VERSION,
+        counter: next_counter,
         encoder: @encoder_id,
         records: records,
         expiry:  expiry.transform_values(&.to_unix_ms),
@@ -159,6 +180,7 @@ module Semrember
         temp.close
         File.rename(temp.path, @path)
         File.open(File.dirname(@path)) { |directory| directory.fsync }
+        @counter = next_counter
         @encoder_upgrade_pending = false
       rescue ex
         # A failure after rename has an uncertain commit outcome. Never continue

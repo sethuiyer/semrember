@@ -1,6 +1,6 @@
 # Decision power and leave-one-out influence
 
-[README](../README.md) · [Engine design](DESIGN.md) · [Retention pilot study](RETENTION_STUDY.md) · [15-row worked example](WORKED_EXAMPLE.md)
+[README](../README.md) · [Engine design](DESIGN.md) · [Retention pilot study](RETENTION_STUDY.md) · [Compaction pilot](COMPACTION_STUDY.md) · [15-row worked example](WORKED_EXAMPLE.md)
 
 This document defines the influence tooling, derives the exact leave-one-out
 shortcut, and reports what the experiments actually showed.
@@ -230,13 +230,15 @@ With `-Dlapack`, Q=200 synthetic queries:
 
 | N | fit | influence total | kernel | matmul | eval | naive est. | speedup |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 1,000 | 1.1 s | 0.41 s | 0.27 s | 0.11 s | 1.5 ms | 19.7 s | 48× |
-| 2,000 | 5.8 s | 1.03 s | 0.54 s | 0.45 s | 2.0 ms | 66.4 s | 64× |
-| 4,000 | 34 s | 2.88 s | 1.08 s | 1.72 s | 3.9 ms | 306 s | 106× |
-| 6,000 | 102 s | 5.77 s | 1.64 s | 3.99 s | 7.6 ms | 1,119 s | 194× |
+| 1,000 | 1.1 s | 0.42 s | 0.28 s | 0.11 s | 0.9 ms | 18.2 s (direct) | 43.8× |
+| 2,000 | 5.5 s | 1.03 s | 0.57 s | 0.43 s | 1.8 ms | 61.2 s (direct) | 59.7× |
+| 4,000 | 34 s | 2.88 s | 1.08 s | 1.72 s | 3.9 ms | 306 s (estimated) | 106× |
+| 6,000 | 102 s | 5.77 s | 1.64 s | 3.99 s | 7.6 ms | 1,119 s (estimated) | 194× |
 
-The naive estimate is extrapolated from ten exact delete-and-query runs per N.
-The speedup grows with N because the shortcut removes the per-memory mutation.
+The 1k and 2k rows use a direct full naive delete-and-query run. The 4k and 6k
+rows extrapolate from ten exact delete-and-query measurements because a full
+naive run becomes impractical. The speedup grows with N because the shortcut
+removes the per-memory mutation.
 
 ## Retention experiment
 

@@ -2,23 +2,56 @@ require "../src/semrember"
 require "../src/csv"
 require "../src/influence"
 
-# Hot-working-set retention experiment.
+# Real-corpus hot-working-set retention experiment.
 #
-#   crystal run --release tools/retention_experiment.cr -- ~/semrember/build/pokemon.csv
+#   crystal run --release tools/retention_experiment.cr -- \
+#     ~/Documents/Documents/Workspace/Datasets/BBC_News_Article_Train.csv \
+#     --text-col text --label-col category --max-rows 1200 --queries 100
 #
-# Train on an 80% split, build a perturbed query corpus from the training keys,
-# rank memories by several strategies, and measure decision agreement with the
-# complete model on the held-out 20%.
+# Or the default Pokemon CSV when no path is supplied.
 
-path = ARGV[0]? || File.expand_path("~/semrember/build/pokemon.csv")
+text_col = "text"
+label_col = "category"
+max_rows = 0
+query_count = 100
+seed = 19_u64
+path : String? = nil
+args = ARGV.dup
+i = 0
+while i < args.size
+  case args[i]
+  when "--text-col"
+    text_col = args[i + 1]; i += 2
+  when "--label-col"
+    label_col = args[i + 1]; i += 2
+  when "--max-rows"
+    max_rows = args[i + 1].to_i; i += 2
+  when "--queries"
+    query_count = args[i + 1].to_i; i += 2
+  when "--seed"
+    seed = args[i + 1].to_u64; i += 2
+  else
+    path = args[i]; i += 1
+  end
+end
+path ||= File.expand_path("~/semrember/build/pokemon.csv")
+if path.ends_with?("pokemon.csv")
+  text_col = "Name"
+  label_col = "Type 1"
+end
+
 data = {} of String => String
-Semrember::Csv.load_pairs(path, "Name", "Type 1").each do |(name, type)|
-  data[name.downcase] = type
+Semrember::Csv.load_pairs(path, text_col, label_col).each do |(text, label)|
+  data[text.downcase] = label
 end
 raise "empty corpus" if data.empty?
 
+if max_rows > 0 && data.size > max_rows
+  data = data.to_a.shuffle(Random.new(seed)).first(max_rows).to_h
+end
+
 items = data.to_a
-items.shuffle(Random.new(0))
+items.shuffle(Random.new(seed))
 test_size = {1, items.size // 5}.max
 test = items.first(test_size)
 train = items[test_size..].to_h
@@ -30,15 +63,16 @@ full = Semrember::Memory.new(solver: :dual, min_df: 1).fit(train)
 full_pred = test.map { |(q, _)| full.query(q, 1)[0]? ? full.query(q, 1)[0][0] : "" }
 full_escalate = test.map { |(q, _)| full.novelty(q) > 0.55 }
 
-rng = Random.new(19)
-query_corpus = Array(String).new(100) do
-  k = train_keys[rng.rand(n)].split(' ')
-  if k.size > 1 && rng.rand(2) == 0
-    k[rng.rand(k.size)] = "mut#{rng.rand(10_000)}"
-  else
-    k.join
+rng = Random.new(seed)
+query_corpus = Array(String).new(query_count) do
+  text = train_keys[rng.rand(n)]
+  words = text.split(' ')
+  if words.size > 2
+    words[rng.rand(words.size)] = "mut#{rng.rand(10_000)}"
+  elsif !words.empty?
+    words[0] = words[0] + "mut#{rng.rand(10_000)}"
   end
-  k.join(' ')
+  words.join(' ')
 end
 
 profile = Semrember::BanzhafProfile.new
@@ -70,21 +104,22 @@ strategies = {
   "hybrid"    => hybrid,
 }
 
-puts "pokemon retention: train=#{n} test=#{test.size} queries=#{query_corpus.size}"
+puts "retention: path=#{path} train=#{n} test=#{test.size} classes=#{train.values.uniq.size} queries=#{query_corpus.size}"
 puts "influence: total=#{profile.total_ms.round(1)}ms matmul=#{profile.matmul_ms.round(1)}ms"
 puts
 puts "%-8s %-10s %-12s %-12s" % ["K", "strategy", "decision", "escalation"]
-ks = [10, 20, 40, 80, 120, 200, 300, 400, 500, n].select { |k| k <= n }.uniq
+ks = [10, 20, 40, 80, 120, 200, 300, 400, 500, 800, n].select { |k| k <= n }.uniq
 ks.each do |k|
   strategies.each do |name, scores|
     keep = train_keys.sort_by { |key| -(scores[key]? || 0.0) }.first(k)
-    subset = Semrember::Memory.new(solver: :dual, min_df: 1).fit(train.select { |key, _| keep.includes?(key) })
+    keep_set = keep.to_set
+    subset = Semrember::Memory.new(solver: :dual, min_df: 1).fit(train.select { |key, _| keep_set.includes?(key) })
     decision = 0
     escalation = 0
-    test.each_with_index do |(q, _), i|
+    test.each_with_index do |(q, _), idx|
       hit = subset.query(q, 1)[0]?
-      decision += 1 if hit && hit[0] == full_pred[i]
-      escalation += 1 if (subset.novelty(q) > 0.55) == full_escalate[i]
+      decision += 1 if hit && hit[0] == full_pred[idx]
+      escalation += 1 if (subset.novelty(q) > 0.55) == full_escalate[idx]
     end
     puts "%-8d %-10s %-12.3f %-12.3f" % [k, name, decision.to_f64 / test.size, escalation.to_f64 / test.size]
   end
