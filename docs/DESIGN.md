@@ -19,6 +19,12 @@ a Cholesky factorization, with Gauss-Jordan as a numerical fallback.  The
 classifier is formed as `W = (A Y)ᵀ X`, so the `N×D` representer matrix is not
 materialised.
 
+Live state is `A` (N×N), `W` (T×D), and the sparse feature rows.  There is no
+dense `N×D` observation cache.  Optional `-Dlapack` uses the system LAPACK for
+the Cholesky factorization and inverse; the local `liblapack` on the development
+machine is the reference implementation, so an optimized OpenBLAS/MKL link is
+still the next CPU performance step.
+
 Live mutations use exact algebra against the maintained inverse `A`:
 
 * insertion — Schur-complement growth of `A`;
@@ -154,15 +160,16 @@ on the development machine (`make bench-writer`):
 
 | operation | before | after |
 |---|---:|---:|
-| `fit` | 23.5 s | **2.2 s** |
+| `fit` | 23.5 s | **1.6 s** |
 | first novelty | 3.6 s | **1 ms** |
-| delete one key | 22.9 s | **17 ms** |
-| delete 20 keys | 23.3 s | **313 ms** |
+| delete one key | 22.9 s | **6.8 ms** |
+| delete 20 keys | 23.3 s | **95 ms** |
 
 The change is algorithmic, not a micro-optimization: sparse Gram construction,
 Cholesky instead of Gauss-Jordan, `W = (AY)ᵀX` instead of materialising `AX`,
-principal-submatrix deletion, and an incrementally maintained novelty inverse.
-AMEM bytes on the bundled incident corpus are unchanged.
+removal of the dense `X` cache, principal-submatrix deletion, and an
+incrementally maintained novelty inverse.  AMEM bytes on the bundled incident
+corpus are unchanged.
 
 The engine is ~2,800 lines of Crystal plus ~2,600 generated table lines;
 the whole public repository is under 4,000 hand-written lines.

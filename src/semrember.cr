@@ -15,6 +15,15 @@ require "set"
 require "./codec"
 require "./static_encoder"
 
+{% if flag?(:lapack) %}
+  @[Link("lapack")]
+  @[Link("blas")]
+  lib LibSemremberLapack
+    fun dpotrf_(uplo : UInt8*, n : Int32*, a : Float64*, lda : Int32*, info : Int32*) : Void
+    fun dpotri_(uplo : UInt8*, n : Int32*, a : Float64*, lda : Int32*, info : Int32*) : Void
+  end
+{% end %}
+
 module Semrember
   class UnavailableError < Exception
   end
@@ -98,44 +107,83 @@ module Semrember
     # Cholesky factorization of a symmetric positive-definite matrix,
     # row-major lower-triangular L such that M = L L^T.
     def cholesky(m : Array(Float64), n : Int32) : Array(Float64)
-      l = Array(Float64).new(n * n, 0_f64)
-      n.times do |i|
-        (i...n).each do |j|
-          s = m[i * n + j]
-          i.times { |k| s -= l[i * n + k] * l[j * n + k] }
-          if i == j
-            raise ArgumentError.new("matrix is not positive definite") if s <= 0.0
-            l[i * n + i] = Math.sqrt(s)
-          else
-            l[j * n + i] = s / l[i * n + i]
+      {% if flag?(:lapack) %}
+        # LAPACK uses column-major storage.  K is symmetric, so the lower
+        # triangle in row-major is the same matrix; copy the result back into
+        # a row-major lower factor.
+        work = m.dup
+        uplo = 'L'.ord.to_u8
+        nn = n
+        lda = n
+        info = 0
+        LibSemremberLapack.dpotrf_(pointerof(uplo), pointerof(nn), work.to_unsafe, pointerof(lda), pointerof(info))
+        raise ArgumentError.new("matrix is not positive definite") unless info == 0
+        l = Array(Float64).new(n * n, 0_f64)
+        n.times do |i|
+          (0..i).each { |j| l[i * n + j] = work[i + j * n] }
+        end
+        l
+      {% else %}
+        l = Array(Float64).new(n * n, 0_f64)
+        n.times do |i|
+          (i...n).each do |j|
+            s = m[i * n + j]
+            i.times { |k| s -= l[i * n + k] * l[j * n + k] }
+            if i == j
+              raise ArgumentError.new("matrix is not positive definite") if s <= 0.0
+              l[i * n + i] = Math.sqrt(s)
+            else
+              l[j * n + i] = s / l[i * n + i]
+            end
           end
         end
-      end
-      l
+        l
+      {% end %}
     end
 
     # Inverse of an SPD matrix from its Cholesky factor.  Solving for the
     # inverse costs N^3/3 + N^3/3, roughly half of Gauss-Jordan's work.
     def cholesky_inverse(m : Array(Float64), n : Int32) : Array(Float64)
-      l = cholesky(m, n)
-      inv_l = Array(Float64).new(n * n, 0_f64)
-      n.times do |col|
+      {% if flag?(:lapack) %}
+        work = m.dup
+        uplo = 'L'.ord.to_u8
+        nn = n
+        lda = n
+        info = 0
+        LibSemremberLapack.dpotrf_(pointerof(uplo), pointerof(nn), work.to_unsafe, pointerof(lda), pointerof(info))
+        raise ArgumentError.new("matrix is not positive definite") unless info == 0
+        LibSemremberLapack.dpotri_(pointerof(uplo), pointerof(nn), work.to_unsafe, pointerof(lda), pointerof(info))
+        raise ArgumentError.new("matrix is singular") unless info == 0
+        inv = Array(Float64).new(n * n, 0_f64)
         n.times do |i|
-          s = (i == col ? 1.0 : 0.0)
-          i.times { |k| s -= l[i * n + k] * inv_l[k * n + col] }
-          inv_l[i * n + col] = s / l[i * n + i]
+          (0..i).each do |j|
+            v = work[i + j * n]
+            inv[i * n + j] = v
+            inv[j * n + i] = v
+          end
         end
-      end
-      inv = Array(Float64).new(n * n, 0_f64)
-      n.times do |i|
-        (i...n).each do |j|
-          s = 0.0
-          n.times { |k| s += inv_l[k * n + i] * inv_l[k * n + j] }
-          inv[i * n + j] = s
-          inv[j * n + i] = s
+        inv
+      {% else %}
+        l = cholesky(m, n)
+        inv_l = Array(Float64).new(n * n, 0_f64)
+        n.times do |col|
+          n.times do |i|
+            s = (i == col ? 1.0 : 0.0)
+            i.times { |k| s -= l[i * n + k] * inv_l[k * n + col] }
+            inv_l[i * n + col] = s / l[i * n + i]
+          end
         end
-      end
-      inv
+        inv = Array(Float64).new(n * n, 0_f64)
+        n.times do |i|
+          (i...n).each do |j|
+            s = 0.0
+            n.times { |k| s += inv_l[k * n + i] * inv_l[k * n + j] }
+            inv[i * n + j] = s
+            inv[j * n + i] = s
+          end
+        end
+        inv
+      {% end %}
     end
 
     # Cholesky first, Gauss-Jordan as a numerical fallback.
@@ -208,7 +256,6 @@ module Semrember
     @train_y : Array(Int32)
     @train_feats : Array(Features)
     @a : Array(Float64)?  # dual inverse, N x N
-    @x : Array(Float64)?  # dense observations, N x D
     @novelty_inverse : Array(Float64)?
 
     def initialize(@solver : Symbol = :dual, @min_df : Int32 = 1,
@@ -232,7 +279,6 @@ module Semrember
       @train_y = [] of Int32
       @train_feats = [] of Features
       @a = nil
-      @x = nil
       @novelty_inverse = nil
       @observations_available = true
     end
@@ -478,13 +524,7 @@ module Semrember
       n = encs.size
       @w = Array(Float32).new(t * d, 0_f32)
       @a = nil
-      @x = nil
       return if n == 0
-      x = Array(Float64).new(n * d, 0_f64)
-      encs.each_with_index do |f, i|
-        row = f.dense(@d_tfidf, @d_static)
-        d.times { |dd| x[i * d + dd] = row[dd].to_f64 }
-      end
       k = kernel_matrix(encs)
       a = Linalg.inverse_spd(k, n)
       b = Array(Float64).new(n * t, 0_f64)
@@ -493,15 +533,21 @@ module Semrember
           b[i * t + ys[j]] += a[i * n + j]
         end
       end
-      t.times do |c|
-        d.times do |dd|
-          s = 0.0_f64
-          n.times { |i| s += b[i * t + c] * x[i * d + dd] }
-          @w[c * d + dd] = s.to_f32
+      # W = (A Y)ᵀ X, accumulated over the sparse feature rows.  For a fixed
+      # (label, feature) pair the additions still occur in observation order,
+      # so this matches the dense result without materialising N×D.
+      w64 = Array(Float64).new(t * d, 0_f64)
+      n.times do |i|
+        f = encs[i]
+        t.times do |c|
+          bc = b[i * t + c]
+          next if bc == 0.0
+          f.idx.each_with_index { |ix, kk| w64[c * d + ix] += bc * f.val[kk].to_f64 }
+          f.st.each_with_index { |v, dd| w64[c * d + @d_tfidf + dd] += bc * v.to_f64 }
         end
       end
+      @w = w64.map { |v| v.to_f32 }
       @a = a
-      @x = x
     end
 
     # Debug/validation helper: recompute W = Yᵀ(XXᵀ + λI)⁻¹X from the
@@ -737,7 +783,7 @@ module Semrember
 
     # Exact rank-1 replacement: W[v_new] += P_j, W[v_old] -= P_j.
     private def dual_overwrite(j : Int32, target : Int32)
-      return unless @a && @x
+      return unless @a
       d = d_total
       old = @train_y[j]
       return if old == target
@@ -749,15 +795,22 @@ module Semrember
       @train_y[j] = target
     end
 
-    # Exact rank-1 insert: Schur-complement growth of A and X.
+    # Exact rank-1 insert: Schur-complement growth of A.  The dense X cache
+    # is not needed; k and Xᵀ Ak are accumulated from sparse feature rows.
     private def dual_insert(f : Features, target : Int32)
       a = @a.not_nil!
-      x = @x.not_nil!
       d = d_total
       n = @train_keys.size
       xv = f.dense(@d_tfidf, @d_static).map { |v| v.to_f64 }
       k = Array(Float64).new(n, 0_f64)
-      n.times { |i| d.times { |dd| k[i] += x[i * d + dd] * xv[dd] } }
+      n.times do |i|
+        g = @train_feats[i]
+        s = sparse_dot(g, f)
+        if @d_static > 0
+          @d_static.times { |dd| s += g.st[dd].to_f64 * f.st[dd].to_f64 }
+        end
+        k[i] = s
+      end
       ak = Array(Float64).new(n, 0_f64)
       n.times do |i|
         s = 0.0_f64
@@ -766,13 +819,16 @@ module Semrember
       end
       sig = @rls_reg + xv.sum { |v| v * v } - k.zip(ak).sum { |p, q| p * q }
       sig = 1e-6 if sig <= 1e-12
-      r = Array(Float64).new(d, 0_f64)
-      # r = (x - Xᵀ Ak) / sigma
-      d.times do |dd|
-        s = 0.0_f64
-        n.times { |j| s += x[j * d + dd] * ak[j] }
-        r[dd] = (xv[dd] - s) / sig
+      xak = Array(Float64).new(d, 0_f64)
+      n.times do |j|
+        aj = ak[j]
+        next if aj == 0.0
+        g = @train_feats[j]
+        g.idx.each_with_index { |ix, kk| xak[ix] += aj * g.val[kk].to_f64 }
+        g.st.each_with_index { |v, dd| xak[@d_tfidf + dd] += aj * v.to_f64 }
       end
+      r = Array(Float64).new(d, 0_f64)
+      d.times { |dd| r[dd] = (xv[dd] - xak[dd]) / sig }
       t = rows
       err = Array(Float64).new(t, 0.0_f64)
       t.times do |c|
@@ -791,11 +847,7 @@ module Semrember
         an[n * (n + 1) + i] = -ak[i] / sig
       end
       an[n * (n + 1) + n] = 1.0 / sig
-      xn = Array(Float64).new((n + 1) * d, 0_f64)
-      n.times { |i| d.times { |dd| xn[i * d + dd] = x[i * d + dd] } }
-      d.times { |dd| xn[n * d + dd] = xv[dd] }
       @a = an
-      @x = xn
     end
 
     # Keep a cached lexical novelty inverse in sync with a new observation.
@@ -870,15 +922,6 @@ module Semrember
         end
       end
 
-      x = @x.not_nil!
-      new_x = Array(Float64).new((n - 1) * d, 0_f64)
-      ri = 0
-      n.times do |r|
-        next if r == i
-        d.times { |dd| new_x[ri * d + dd] = x[r * d + dd] }
-        ri += 1
-      end
-      @x = new_x
       @train_keys.delete_at(i)
       @train_y.delete_at(i)
       @train_feats.delete_at(i)
