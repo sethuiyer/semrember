@@ -104,6 +104,38 @@ class Semrember:
     def delete(self, key: str) -> bool:
         return bool(self._request("DELETE", self._key_path(key)).get("deleted"))
 
+    def set_checked(self, key: str, value: str, *,
+                    poison_check: bool = True,
+                    reject_suspicious: bool = False) -> dict:
+        """Store a value and return the full response, including poison_check."""
+        return self._request("PUT", self._key_path(key), {
+            "value": value,
+            "poison_check": poison_check,
+            "reject_suspicious": reject_suspicious,
+        })
+
+    # ── governance / counterfactual operations ──────────────────────────
+    def influence(self, queries: list[str], max_examples: int = 3) -> list[dict]:
+        """Leave-one-out pivotal power for each stored memory."""
+        out = self._request("POST", "/v1/influence", {
+            "queries": queries,
+            "max_examples": max_examples,
+        })
+        return list(out.get("memories", []))
+
+    def compact(self, queries: list[str], *, beta_threshold: float = 0.0,
+                coverage_floor: int = 0, pin: list[str] | None = None,
+                keep_per_label: int = 1, verify: bool = True) -> dict:
+        """Verified counterfactual compaction over a query corpus."""
+        return self._request("POST", "/v1/compact", {
+            "queries": queries,
+            "beta_threshold": beta_threshold,
+            "coverage_floor": coverage_floor,
+            "pin": pin or [],
+            "keep_per_label": keep_per_label,
+            "verify": verify,
+        })
+
     def exists(self, key: str) -> bool:
         return bool(self._request("GET", self._key_path(key) + "/exists").get("exists"))
 

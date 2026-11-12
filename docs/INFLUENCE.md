@@ -284,6 +284,32 @@ Semrember-specific engineering:
 - hot-working-set retention as a use for the influence score
 - separating empirical leave-one-out power from classical coalition Banzhaf
 
+## Poison-check limits
+
+The poison check is a diagnostic, not an access-control boundary.
+
+- An attacker who writes a key lexically similar to the target queries can
+  lower the dissimilarity signal.
+- A single clean write does not prove absence of cumulative drift.
+- The server keeps a short history of recent poison checks and treats three
+  `suspicious` verdicts in the recent window as cumulative suspicion.
+- It does not replace provenance, rate limits, review, or a trust boundary on
+  writers.
+- It measures model sensitivity, not malicious intent.
+
+## HTTP surface
+
+The live server exposes the governance layer:
+
+- `POST /v1/influence` — leave-one-out pivotal power for a query list
+- `POST /v1/compact` — verified recursive compaction
+- `PUT /v1/kv/{key}` with `"poison_check": true` — per-write poison check
+- `PUT /v1/kv/{key}` with `"reject_suspicious": true` — reject a suspicious
+  write with HTTP 409
+
+The poison check uses the last 128 SIMILAR / ESCALATE / NOVELTY inputs as its
+query corpus. See [API.md](../API.md) for the exact JSON shapes.
+
 ## Reproduce
 
 ```bash

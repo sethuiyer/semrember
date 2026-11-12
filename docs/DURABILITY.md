@@ -36,8 +36,8 @@ or `persistence: memory`.
 ## Commit and recovery
 
 Every PUT, DELETE, successful EXPIRE and expiration purge builds candidate records
-and deadlines before changing live state. The semantic index is rebuilt only when
-records change; an EXPIRE or same-value PUT updates the snapshot without refitting.
+and deadlines before changing live state. Record changes are applied to a private incremental copy of the semantic index;
+an EXPIRE or same-value PUT updates the snapshot without touching the index.
 On restart, a missing snapshot is created, but an existing valid snapshot is not
 rewritten unless expired records were purged or encoder metadata is being recorded.
 A mutation then:
@@ -115,10 +115,12 @@ or replacing it with another valid snapshot encrypted using the same key is not
 detected. Use a distinct key per store and trusted backups/checkpoints if you need
 rollback detection. A missing data file initializes a new empty store.
 
-Each mutation rewrites the entire snapshot while holding the service lock; record
-changes also refit the index. This trades throughput and temporary memory for a
-simple atomic commit boundary and suits small stores. Refit updates vocabulary/IDF,
-so semantic scores can differ from default incremental mode. EXPIRE and same-value
-PUTs still rewrite the snapshot, but reuse the current semantic index. No WAL, replication, incremental
-checkpointing or model-weight snapshot is claimed. AMEM export remains plaintext
-and unchanged; use this mode for the service's durable records.
+Each mutation rewrites the entire snapshot while holding the service lock.
+Record changes are applied to a private copy with the same exact incremental
+writer used by in-memory mode; the copy is published only after the snapshot
+commit succeeds. EXPIRE and same-value PUTs still rewrite the snapshot, but
+reuse the current semantic index. Startup still rebuilds the index from the
+restored records, so vocabulary and IDF are recomputed at boot; live writes
+after boot keep that vocabulary fixed. No WAL, replication, incremental
+checkpointing or model-weight snapshot is claimed. AMEM export remains
+plaintext and unchanged; use this mode for the service's durable records.

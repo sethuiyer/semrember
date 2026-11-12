@@ -37,6 +37,19 @@ class ClientErrorsTest(unittest.TestCase):
     def test_encodes_operation_like_keys_as_one_segment(self):
         self.assertEqual(Semrember._key_path("a/exists+%"), "/v1/kv/a%2Fexists%2B%25")
 
+    def test_influence_and_compact(self):
+        influence = io.BytesIO(b'{"memories":[{"key":"disk","beta":0.5}]}')
+        influence.status = 200
+        with patch("urllib.request.urlopen", return_value=influence):
+            self.assertEqual(Semrember().influence(["disk"])[0]["beta"], 0.5)
+
+        compact = io.BytesIO(b'{"ok":true,"kept":3,"pruned":2,"verified":true}')
+        compact.status = 200
+        with patch("urllib.request.urlopen", return_value=compact):
+            result = Semrember().compact(["disk"], coverage_floor=1)
+            self.assertTrue(result["verified"])
+            self.assertEqual(result["pruned"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

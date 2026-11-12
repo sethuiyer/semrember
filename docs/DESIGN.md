@@ -46,8 +46,10 @@ is present, the lexical inverse is the full inverse and is reused directly.
 The feature vocabulary and IDF weights stay fixed between fits.  Live writes
 use only features already in that vocabulary; a new key can update weights but
 cannot introduce new lexical coordinates.  This is why the incremental
-identities are valid across live writes.  Attribution, counterfactual previews,
-and pruning APIs are not implemented in this port.
+identities are valid across live writes.  Counterfactual attribution,
+leave-one-out pivotal power, poison diagnostics, and verified compaction are
+implemented in `src/influence.cr`; distributed sharding and a synchronized
+Cholesky factor are not.
 
 The update is exact for the regularized ridge objective; classification
 is still a learned prediction and can be affected by feature collisions.

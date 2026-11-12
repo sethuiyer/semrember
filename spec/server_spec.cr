@@ -136,6 +136,40 @@ describe Semrember::Server do
     request(server, "POST", "/v1/kv")[0].should eq 405
   end
 
+  it "exposes influence, compaction, and poison checks" do
+    server = Semrember::Server.new(nil, nil)
+    ["disk full", "host down", "cert expired", "cache stale"].each do |key|
+      put(server, key, key.split(' ').first)[0].should eq 200
+    end
+    ["disk full", "host down", "cert expired", "cache stale", "unknown"].each do |q|
+      request(server, "POST", "/v1/similar", {text: q}.to_json)[0].should eq 200
+    end
+
+    status, body = request(server, "POST", "/v1/influence", {
+      queries: ["disk full", "cert expired", "cache stale", "unknown"],
+    }.to_json)
+    status.should eq 200
+    body["memories"].as_a.size.should be >= 4
+    body["memories"][0]["beta"].as_f.should be >= 0.0
+
+    status, body = request(server, "PUT", "/v1/kv/certificate%20expired",
+      {value: "renew", poison_check: true}.to_json)
+    status.should eq 200
+    body["poison_check"].as_h.has_key?("verdict").should be_true
+
+    status, body = request(server, "POST", "/v1/compact", {
+      queries: ["disk full", "host down", "cert expired", "cache stale"],
+      beta_threshold: 0.0,
+      coverage_floor: 0,
+      keep_per_label: 1,
+      verify: true,
+    }.to_json)
+    status.should eq 200
+    body["kept"].as_i.should be >= 1
+    body["pruned"].as_i.should be >= 0
+    body["verified"].as_bool.should be_true
+  end
+
   it "reports unavailable semantic state explicitly for loaded models" do
     path = File.tempname("semrember-server", ".amem")
     begin

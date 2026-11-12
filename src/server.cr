@@ -18,7 +18,9 @@
 
 require "kemal"
 require "json"
+require "deque"
 require "./semrember"
+require "./influence"
 require "./csv"
 require "./encrypted_store"
 
@@ -32,6 +34,10 @@ module Semrember
     @started : Time
     @store : EncryptedStore?
     @encoder : StaticEncoder?
+    @query_buffer : Deque(String)
+    @poison_history : Array(NamedTuple(at: Time, key: String, suspicion: Float64, verdict: String))
+    @query_buffer_limit : Int32 = 128
+    @poison_history_limit : Int32 = 64
 
     def initialize(model : String?, static : String?, train : String? = nil,
                    key_col : String = "message", val_col : String = "action",
@@ -52,6 +58,8 @@ module Semrember
              end
       @records = {} of String => String
       @expiry = {} of String => Time
+      @query_buffer = Deque(String).new
+      @poison_history = [] of NamedTuple(at: Time, key: String, suspicion: Float64, verdict: String)
       @lock = Mutex.new
       @started = Time.utc
       # A model loaded from disk has no training keys — the file format does
@@ -94,8 +102,23 @@ module Semrember
       expiry = @expiry.dup
       yield records, expiry
       # EXPIRE and same-value PUTs change only deadlines (or nothing at all);
-      # reuse the semantic index instead of paying for a full refit.
-      candidate = records == @records ? @mem : Memory.new(solver: :dual, static: @encoder).fit(records)
+      # reuse the semantic index.  Record changes use exact incremental
+      # updates on a private copy instead of refitting the full model.
+      candidate = if records == @records
+                    @mem
+                  else
+                    copy = @mem.duplicate_for_influence
+                    unless copy.writable?
+                      copy = Memory.new(solver: :dual, static: @encoder).fit(records)
+                    else
+                      @records.each_key { |k| copy.delete(k) unless records.has_key?(k) }
+                      records.each do |k, v|
+                        next if @records[k]? == v
+                        copy.set(k, v)
+                      end
+                    end
+                    copy
+                  end
       @store.not_nil!.save(records, expiry)
       @records = records
       @expiry = expiry
@@ -130,6 +153,8 @@ module Semrember
       end
       api.post("/similar") { |ctx| handle(ctx); nil }
       api.post("/escalate") { |ctx| handle(ctx); nil }
+      api.post("/influence") { |ctx| handle(ctx); nil }
+      api.post("/compact") { |ctx| handle(ctx); nil }
       {% for method in %w(get put delete post) %}
         api.{{method.id}}("/kv/*key") { |ctx| handle(ctx); nil }
       {% end %}
@@ -170,7 +195,11 @@ module Semrember
         end
         if path == "/v1/novelty"
           text = qparam(ctx, "text") || ""
-          v = @lock.synchronize { purge_all_expired; @mem.novelty(text) }
+          v = @lock.synchronize do
+            purge_all_expired
+            remember_query(text)
+            @mem.novelty(text)
+          end
           respond(ctx, 200) { |j| j.object { j.field "novelty", v } }
           return
         end
@@ -180,6 +209,14 @@ module Semrember
         end
         if path == "/v1/escalate" && method == "POST"
           escalate(ctx)
+          return
+        end
+        if path == "/v1/influence" && method == "POST"
+          influence_endpoint(ctx)
+          return
+        end
+        if path == "/v1/compact" && method == "POST"
+          compact_endpoint(ctx)
           return
         end
         if path == "/v1/kv"
@@ -251,9 +288,37 @@ module Semrember
       when "PUT"
         body = read_body(ctx)
         value = required_string(body, "value")
+        wants_poison = bool_field(body, "poison_check", false)
+        reject_suspicious = bool_field(body, "reject_suspicious", false)
+        poison_result = nil.as(PoisonCheckResult?)
+        poison_queries = 0
+        cumulative_suspicious = 0
+        cumulative_suspicion = 0.0_f64
+        rejected = false
         prev = @lock.synchronize do
           purge_expired(key)
           old = @records[key]?
+          if wants_poison && @mem.observations_available && @mem.stored > 0
+            qs = @query_buffer.to_a
+            poison_queries = qs.size
+            if qs.size >= 3
+              poison_result = @mem.poison_check(key, value, qs)
+              @poison_history << {at: Time.utc, key: key,
+                suspicion: poison_result.not_nil!.suspicion,
+                verdict: poison_result.not_nil!.verdict}
+              while @poison_history.size > @poison_history_limit
+                @poison_history.shift
+              end
+              recent = @poison_history.last(16)
+              cumulative_suspicious = recent.count { |e| e[:verdict] == "suspicious" }
+              cumulative_suspicion = recent.sum { |e| e[:suspicion] }
+            end
+          end
+          if reject_suspicious && poison_result &&
+             (poison_result.not_nil!.verdict == "suspicious" || cumulative_suspicious >= 3)
+            rejected = true
+            next old
+          end
           if @store
             commit_change { |records, expiry| records[key] = value; expiry.delete(key) }
           else
@@ -263,11 +328,38 @@ module Semrember
           end
           old
         end
+        if rejected
+          respond(ctx, 409) do |j|
+            j.object do
+              j.field "error", "suspicious write rejected"
+              j.field "poison_check" do
+                j.object do
+                  poison_json(j, poison_result.not_nil!, poison_queries, cumulative_suspicious, cumulative_suspicion)
+                end
+              end
+            end
+          end
+          return
+        end
         respond(ctx, 200) do |j|
           j.object do
             j.field "ok", true
             j.field "semantic_updated", @mem.writable?
             j.field "previous", prev.nil? ? JSON::Any.new(nil) : JSON::Any.new(prev.not_nil!)
+            if wants_poison
+              j.field "poison_check" do
+                if result = poison_result
+                  j.object do
+                    poison_json(j, result, poison_queries, cumulative_suspicious, cumulative_suspicion)
+                  end
+                else
+                  j.object do
+                    j.field "verdict", "insufficient_queries"
+                    j.field "queries", poison_queries
+                  end
+                end
+              end
+            end
           end
         end
       when "DELETE"
@@ -343,6 +435,7 @@ module Semrember
       min_score = body["min_score"]?
       candidates = @lock.synchronize do
         purge_all_expired
+        remember_query(text)
         hits = @mem.similar(text, topk)
         result = [] of Tuple(String, String, Float64)
         hits.each do |(key, score)|
@@ -381,6 +474,7 @@ module Semrember
       min_novelty = jfloat(body["min_novelty"]?, 0.55)
       ranked, nov = @lock.synchronize do
         purge_all_expired
+        remember_query(text)
         {@mem.query(text, 3), @mem.novelty(text)}
       end
       margin = 0.0_f64
@@ -426,11 +520,147 @@ module Semrember
       end
     end
 
+    private def influence_endpoint(ctx : HTTP::Server::Context)
+      body = read_body(ctx)
+      queries = required_string_array(body, "queries")
+      max_examples = jnum(body["max_examples"]?, 3_i64).to_i32
+      raise ArgumentError.new("max_examples must be nonnegative") if max_examples < 0
+      results = @lock.synchronize do
+        purge_all_expired
+        raise UnavailableError.new("loaded models have no stored observations") unless @mem.observations_available
+        @mem.banzhaf_influence(queries, max_examples)
+      end
+      respond(ctx, 200) do |j|
+        j.object do
+          j.field "memories" do
+            j.array do
+              results.each do |r|
+                j.object do
+                  j.field "key", r.key
+                  j.field "index", r.index
+                  j.field "beta", r.banzhaf
+                  j.field "pivotal_queries", r.pivotal_queries
+                  j.field "mean_influence", r.mean_influence
+                  j.field "max_influence", r.max_influence
+                  j.field "a_ii", r.a_ii
+                  j.field "unstable", r.unstable
+                  j.field "examples" do
+                    j.array { r.examples.each { |q| j.string q } }
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+
+    private def compact_endpoint(ctx : HTTP::Server::Context)
+      body = read_body(ctx)
+      queries = required_string_array(body, "queries")
+      threshold = jfloat(body["beta_threshold"]?, 0.0)
+      coverage = jnum(body["coverage_floor"]?, 0_i64).to_i32
+      keep_per_label = jnum(body["keep_per_label"]?, 1_i64).to_i32
+      pin = optional_string_array(body, "pin")
+      verify = bool_field(body, "verify", true)
+      raise ArgumentError.new("coverage_floor must be nonnegative") if coverage < 0
+      raise ArgumentError.new("keep_per_label must be nonnegative") if keep_per_label < 0
+      result = @lock.synchronize do
+        purge_all_expired
+        raise UnavailableError.new("loaded models have no stored observations") unless @mem.observations_available
+        @mem.compact(queries, beta_threshold: threshold, coverage_floor: coverage,
+          pin: pin, keep_per_label: keep_per_label, verify: verify)
+      end
+      status = result.verified ? 200 : 409
+      respond(ctx, status) do |j|
+        j.object do
+          j.field "ok", result.verified
+          j.field "kept", result.kept
+          j.field "pruned", result.pruned
+          j.field "verified", result.verified
+          j.field "changed_queries", result.changed_queries
+          j.field "pinned_kept", result.pinned_kept
+          j.field "coverage_kept", result.coverage_kept
+          j.field "label_kept", result.label_kept
+          j.field "pruned_keys", result.pruned_keys.size
+          j.field "persistence_note", @store ? "exact records unchanged; compaction is not persisted and restart refits the semantic index" : "exact records unchanged"
+        end
+      end
+    end
+
     # ── helpers ─────────────────────────────────────────────────────────
     private def required_string(body : Hash(String, JSON::Any), name : String) : String
       value = body[name]?.try(&.as_s?)
       raise ArgumentError.new("#{name} must be a string") unless value
       value
+    end
+
+    private def poison_json(j : JSON::Builder, result : PoisonCheckResult,
+                            query_count : Int32, cumulative_suspicious : Int32,
+                            cumulative_suspicion : Float64)
+      j.field "suspicion", result.suspicion
+      j.field "pivotal_queries", result.pivotal_queries
+      j.field "dissimilar_pivots", result.dissimilar_pivots
+      j.field "novelty", result.novelty
+      j.field "verdict", result.verdict
+      j.field "a_ii", result.a_ii
+      j.field "unstable", result.unstable
+      j.field "flipped" do
+        j.array do
+          result.flipped.each do |f|
+            j.object do
+              j.field "query", f.query
+              j.field "old", f.old_label
+              j.field "new", f.new_label
+              j.field "cosine_to_key", f.cosine
+            end
+          end
+        end
+      end
+      j.field "cumulative" do
+        j.object do
+          j.field "query_corpus", query_count
+          j.field "suspicious_writes", cumulative_suspicious
+          j.field "suspicion_sum", cumulative_suspicion
+          j.field "verdict", cumulative_suspicious >= 3 ? "suspicious" : "clean"
+        end
+      end
+    end
+
+    private def required_string_array(body : Hash(String, JSON::Any), name : String) : Array(String)
+      value = body[name]?.try(&.as_a?)
+      raise ArgumentError.new("#{name} must be an array of strings") unless value
+      raise ArgumentError.new("#{name} must not be empty") if value.empty?
+      value.map do |v|
+        s = v.as_s?
+        raise ArgumentError.new("#{name} must be an array of strings") unless s
+        s
+      end
+    end
+
+    private def optional_string_array(body : Hash(String, JSON::Any), name : String) : Array(String)
+      value = body[name]?.try(&.as_a?)
+      return [] of String unless value
+      value.map do |v|
+        s = v.as_s?
+        raise ArgumentError.new("#{name} must be an array of strings") unless s
+        s
+      end
+    end
+
+    private def bool_field(body : Hash(String, JSON::Any), name : String, default : Bool) : Bool
+      value = body[name]?
+      return default unless value
+      raw = value.raw
+      raise ArgumentError.new("#{name} must be a boolean") unless raw.is_a?(Bool)
+      raw
+    end
+
+    private def remember_query(text : String)
+      @query_buffer << text
+      while @query_buffer.size > @query_buffer_limit
+        @query_buffer.shift
+      end
     end
 
     private def jnum(v : JSON::Any?, default : Int64 = 0_i64) : Int64

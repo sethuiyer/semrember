@@ -760,12 +760,23 @@ module Semrember
         return previous
       end
       f = encode(key)
-      dual_insert(f, target)
-      novelty_insert(f) if @novelty_inverse
-      @train_keys << key
-      @train_y << target
-      @train_feats << f
-      @stored = @train_keys.size.to_i32
+      if dual_insert(f, target)
+        novelty_insert(f) if @novelty_inverse
+        @train_keys << key
+        @train_y << target
+        @train_feats << f
+        @stored = @train_keys.size.to_i32
+      else
+        # The Schur complement was numerically unsafe.  Preserve the current
+        # vocabulary and rebuild the exact dual solution from the retained
+        # feature rows plus the new observation.
+        @train_keys << key
+        @train_y << target
+        @train_feats << f
+        @stored = @train_keys.size.to_i32
+        dual_rebuild(@train_feats, @train_y)
+        @novelty_inverse = nil
+      end
       previous
     end
 
@@ -837,7 +848,7 @@ module Semrember
 
     # Exact rank-1 insert: Schur-complement growth of A.  The dense X cache
     # is not needed; k and Xᵀ Ak are accumulated from sparse feature rows.
-    private def dual_insert(f : Features, target : Int32)
+    private def dual_insert(f : Features, target : Int32) : Bool
       a = @a.not_nil!
       d = d_total
       n = @train_keys.size
@@ -858,7 +869,7 @@ module Semrember
         ak[i] = s
       end
       sig = @rls_reg + xv.sum { |v| v * v } - k.zip(ak).sum { |p, q| p * q }
-      sig = 1e-6 if sig <= 1e-12
+      return false if sig <= 1e-12
       xak = Array(Float64).new(d, 0_f64)
       n.times do |j|
         aj = ak[j]
@@ -888,6 +899,7 @@ module Semrember
       end
       an[n * (n + 1) + n] = 1.0 / sig
       @a = an
+      true
     end
 
     # Keep a cached lexical novelty inverse in sync with a new observation.

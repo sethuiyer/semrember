@@ -161,7 +161,9 @@ exact record values come from your restored source records.
 Expiration is lazy. A read or semantic operation removes expired observations
 from the relevant live state before using them. A PUT replaces a record and
 clears its prior TTL. In default mode, neither deadlines nor live writes survive a restart. Durable
-mode preserves them and removes expired records before rebuilding the index.
+mode preserves them and removes expired records before rebuilding the index at
+boot. After boot, durable record changes use the same exact incremental writer
+as in-memory mode; live writes do not expand the vocabulary.
 
 ## Cost of live memory
 

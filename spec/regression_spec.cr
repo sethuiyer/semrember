@@ -197,6 +197,13 @@ describe "memory update regressions" do
     end
   end
 
+  it "falls back to a dual rebuild when the Schur complement is unsafe" do
+    mem = Semrember::Memory.new(rls_reg: 1e-13).fit({"one" => "x"})
+    mem.set("ONE", "y").should be_nil
+    mem.stored.should eq 2
+    mem.writer_residual.should be < 1e-5
+  end
+
   it "handles zero-dimensional live observations without division by zero" do
     mem = Semrember::Memory.new(min_df: 100).fit({"a" => "x"})
     mem.set("b", "y").should be_nil

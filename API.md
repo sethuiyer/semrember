@@ -155,13 +155,73 @@ data. Their defaults are starting values, not calibrated guarantees.
 {"novelty": 0.734}
 ```
 
+### `POST /v1/influence`
+
+Body: `{"queries": ["disk full", "cert expired"], "max_examples": 3}`
+
+Returns empirical leave-one-out pivotal power for each stored memory. This is
+not the classical coalition Banzhaf index.
+
+```json
+{"memories": [
+  {"key": "disk full", "index": 0, "beta": 0.142857, "pivotal_queries": 1,
+   "mean_influence": 0.1377, "max_influence": 0.7084,
+   "a_ii": 2.3586, "unstable": false, "examples": ["cache stale"]}
+]}
+```
+
+### `POST /v1/compact`
+
+Body:
+
+```json
+{"queries": ["disk full", "cert expired"], "beta_threshold": 0.0,
+ "coverage_floor": 0, "pin": ["injury-claim"], "keep_per_label": 1,
+ "verify": true}
+```
+
+Verified counterfactual compaction. Candidate batches are deleted on a copy
+and accepted only if every query decision is preserved; failed batches are
+split recursively. Exact KV records are unchanged. Compaction is not persisted
+in durable mode: restart refits the semantic index from the records.
+
+Returns `200` with counts when no query decision changed, or `409` when the
+requested compaction could not be verified.
+
+### Poison checks on `PUT`
+
+`PUT /v1/kv/{key}` accepts two optional body fields:
+
+```json
+{"value": "free_disk", "poison_check": true, "reject_suspicious": false}
+```
+
+`poison_check` scores the proposed write against the rolling query buffer
+(the last 128 SIMILAR / ESCALATE / NOVELTY inputs). The response includes:
+
+```json
+{"poison_check": {
+  "suspicion": 0.508, "pivotal_queries": 1, "dissimilar_pivots": 0,
+  "novelty": 0.86, "verdict": "suspicious",
+  "flipped": [{"query": "unknown", "old": "fix_dns", "new": "free_disk",
+               "cosine_to_key": 0.492}],
+  "cumulative": {"query_corpus": 5, "suspicious_writes": 1,
+                 "suspicion_sum": 0.508, "verdict": "clean"}
+}}
+```
+
+`reject_suspicious: true` returns HTTP 409 and does not write when the verdict
+is `suspicious` or the recent cumulative count is at least 3. The check is a
+model-sensitivity signal, not proof of malicious intent.
+
 ---
 
 Malformed JSON, missing required string fields and invalid limits return
-HTTP 400. A loaded AMEM reader has no observations, so SIMILAR, ESCALATE
-and NOVELTY return HTTP 409. An empty live service returns no candidates,
-novelty 1, and an escalation decision. The novelty inverse is cached until
-observations change; the first query after a change still builds it.
+HTTP 400. A loaded AMEM reader has no observations, so SIMILAR, ESCALATE,
+NOVELTY, INFLUENCE and COMPACT return HTTP 409. An empty live service returns
+no candidates, novelty 1, and an escalation decision. The novelty inverse is
+cached until observations change; the first query after a change still builds
+it.
 
 ## Server
 

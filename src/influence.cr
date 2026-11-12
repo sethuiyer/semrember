@@ -381,15 +381,17 @@ module Semrember
           zi = z[qq]
           alt = Array(Float64).new(t) { |cc| base[cc] - zi * c[cc] }
         end
-        old_winner = argmax_index_for_poison(base)
-        new_winner = argmax_index_for_poison(alt)
-        next if old_winner == new_winner
+        # base is the model *with* the proposed write; alt is without it.
+        # Report the human-readable direction: before -> after.
+        before_winner = argmax_index_for_poison(alt)
+        after_winner = argmax_index_for_poison(base)
+        next if before_winner == after_winner
         pivotal += 1
         cosine = influence_feature_dot(f_new, qfeats[qq])
         suspicion_sum += 1.0 - cosine
         dissimilar += 1 if cosine < dissimilar_cosine
         if flipped.size < 5
-          flipped << PoisonFlip.new(queries[qq], copy.labels[old_winner], copy.labels[new_winner], cosine)
+          flipped << PoisonFlip.new(queries[qq], copy.labels[before_winner], copy.labels[after_winner], cosine)
         end
       end
 
@@ -496,15 +498,17 @@ module Semrember
       end
 
       ordered = candidates.to_a.sort_by { |key| by_key[key].min_of { |r| r.mean_influence } }
+      before = queries.map { |q| query(q, 1)[0]?.try(&.[0]) }
       if verify
-        before = queries.map { |q| query(q, 1)[0]?.try(&.[0]) }
         trials = [0]
         pruned_keys = compact_batch(ordered, queries, before, trials, max_trials: 64)
       else
         pruned_keys = ordered
         delete_many(pruned_keys)
       end
-      CompactResult.new(@train_keys.size, pruned_keys.size, true, 0,
+      after = queries.map { |q| query(q, 1)[0]?.try(&.[0]) }
+      changed = before.zip(after).count { |a, b| a != b }
+      CompactResult.new(@train_keys.size, pruned_keys.size, changed == 0, changed,
         pinned.size, frequency.count { |_, v| coverage_floor > 0 && v >= coverage_floor },
         label_kept, pruned_keys)
     end
