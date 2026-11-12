@@ -197,7 +197,10 @@ requested compaction could not be verified.
 ```
 
 `poison_check` scores the proposed write against the rolling query buffer
-(the last 128 SIMILAR / ESCALATE / NOVELTY inputs). The response includes:
+(the last 128 SIMILAR / ESCALATE / NOVELTY inputs). For a new key the
+counterfactual is absence -> insertion; for an existing key it is old value ->
+proposed overwrite. The query buffer is caller-influenced and is governance
+telemetry, not trusted security state. The response includes:
 
 ```json
 {"poison_check": {

@@ -296,6 +296,11 @@ The poison check is a diagnostic, not an access-control boundary.
 - It does not replace provenance, rate limits, review, or a trust boundary on
   writers.
 - It measures model sensitivity, not malicious intent.
+- The server's rolling query buffer is caller-influenced. An unauthenticated
+  caller can submit queries first and shape the detector's reference
+  distribution. Treat that buffer as telemetry, not trusted policy state.
+- For a new key the counterfactual is absence -> insertion; for an existing key
+  it is old label -> proposed label.
 
 ## HTTP surface
 

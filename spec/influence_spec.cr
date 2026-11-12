@@ -159,6 +159,20 @@ describe "leave-one-out influence" do
     suspicious.flipped.each { |f| f.query.should be_a(String) }
   end
 
+  it "reports overwrite poison checks as old label to new label" do
+    mem = Semrember::Memory.new.fit({
+      "disk full" => "free_disk", "no space left" => "free_disk",
+      "host down" => "fix_dns", "dns timeout" => "fix_dns",
+      "cert expired" => "renew_cert", "x509 expired" => "renew_cert",
+      "cache stale" => "clear_cache", "stale cache entry" => "clear_cache",
+    })
+    result = mem.poison_check("cache stale", "fix_dns", ["cache stale"])
+    result.pivotal_queries.should be >= 1
+    result.flipped[0].old_label.should eq "clear_cache"
+    result.flipped[0].new_label.should eq "fix_dns"
+    result.suspicion.should be >= 0.0
+  end
+
   it "compacts only when the group deletion preserves decisions" do
     rng = Random.new(31)
     corpus = random_corpus(rng, 24)

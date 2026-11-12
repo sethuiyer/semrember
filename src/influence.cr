@@ -325,77 +325,45 @@ module Semrember
                      novelty_threshold : Float64 = 0.8,
                      dissimilar_cosine : Float64 = 0.3) : PoisonCheckResult
       raise ArgumentError.new("queries must not be empty") if queries.empty?
+      if @train_keys.empty?
+        return PoisonCheckResult.new(0.0, 0, 0, 1.0, "insufficient_observations",
+          [] of PoisonFlip, 0.0, false)
+      end
 
       novelty = novelty(key)
       copy = duplicate_for_influence
-      before_size = copy.stored
       copy.set(key, label)
       index = copy.memory_keys.index(key)
       raise ArgumentError.new("proposed key was not inserted") unless index
       n = copy.stored
-      t = copy.label_count
       a = copy.@a.not_nil!
       diag = a[index * n + index]
       floor = influence_diag_floor(a, n)
       unstable = diag <= floor
-
       qfeats = queries.map { |q| copy.encode(q) }
       f_new = copy.@train_feats[index]
-      q_count = queries.size
-      k = Array(Float64).new(n * q_count, 0_f64)
-      n.times do |j|
-        g = copy.@train_feats[j]
-        q_count.times do |qq|
-          k[j * q_count + qq] = influence_feature_dot(g, qfeats[qq])
-        end
-      end
-      z = Array(Float64).new(q_count, 0_f64)
-      row = Array(Float64).new(n) { |j| a[index * n + j] }
-      q_count.times do |qq|
-        sum = 0.0_f64
-        n.times { |j| sum += row[j] * k[j * q_count + qq] }
-        z[qq] = sum
-      end
-      b_row = Array(Float64).new(t, 0_f64)
-      n.times { |j| b_row[copy.@train_y[j]] += row[j] }
-      b = Array(Float64).new(n * t, 0_f64)
-      n.times do |ii|
-        n.times do |j|
-          b[ii * t + copy.@train_y[j]] += a[ii * n + j]
-        end
-      end
-      scores = influence_scores(b, k, n, t, q_count)
-      c = Array(Float64).new(t, 0_f64)
-      t.times { |cc| c[cc] = b_row[cc] / diag } unless unstable
 
       pivotal = 0
       dissimilar = 0
       suspicion_sum = 0.0_f64
       flipped = [] of PoisonFlip
-      q_count.times do |qq|
-        base = Array(Float64).new(t) { |cc| scores[cc * q_count + qq] }
-        if unstable
-          base = copy.scores64(queries[qq])
-          alt = copy.leave_one_out_scores(queries[qq], index)
-        else
-          zi = z[qq]
-          alt = Array(Float64).new(t) { |cc| base[cc] - zi * c[cc] }
-        end
-        # base is the model *with* the proposed write; alt is without it.
-        # Report the human-readable direction: before -> after.
-        before_winner = argmax_index_for_poison(alt)
-        after_winner = argmax_index_for_poison(base)
-        next if before_winner == after_winner
+      queries.each_with_index do |q, qq|
+        # The true write counterfactual is original model -> proposed model.
+        # For a new key that is absence -> insertion; for an existing key it
+        # is old label -> new label.
+        before = query(q, 1)[0]?.try(&.[0])
+        after = copy.query(q, 1)[0]?.try(&.[0])
+        next if before == after
         pivotal += 1
-        cosine = influence_feature_dot(f_new, qfeats[qq])
+        cosine = influence_feature_dot(f_new, qfeats[qq]).clamp(-1.0, 1.0)
         suspicion_sum += 1.0 - cosine
         dissimilar += 1 if cosine < dissimilar_cosine
         if flipped.size < 5
-          flipped << PoisonFlip.new(queries[qq], copy.labels[before_winner], copy.labels[after_winner], cosine)
+          flipped << PoisonFlip.new(q, before || "", after || "", cosine)
         end
       end
 
-      suspicion = pivotal == 0 ? 0.0 : suspicion_sum / pivotal
+      suspicion = pivotal == 0 ? 0.0 : (suspicion_sum / pivotal).clamp(0.0, 1.0)
       verdict = if pivotal == 0
                   "clean"
                 elsif suspicion >= suspicion_threshold &&
@@ -417,17 +385,6 @@ module Semrember
       s
     end
 
-    private def argmax_index_for_poison(scores : Array(Float64)) : Int32
-      winner = 0
-      best = scores[0]
-      (1...scores.size).each do |c|
-        if scores[c] > best
-          best = scores[c]
-          winner = c
-        end
-      end
-      winner
-    end
 
     # Conservative counterfactual compaction.
     #
