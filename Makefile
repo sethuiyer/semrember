@@ -6,7 +6,7 @@ PREFIX  ?= $(HOME)/.local
 DESTDIR ?=
 DX_PYTHON ?= python3
 
-.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke pilot-insurance pilot-insurance-live pilot-test bench-writer verify-sparse-x
+.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke pilot-insurance pilot-insurance-live pilot-test bench-writer verify-sparse-x influence-test banzhaf-mc bench-banzhaf pokemon-banzhaf retention
 
 all: cli server
 
@@ -76,6 +76,23 @@ bench-writer:
 SPARSE_N ?= 1000
 verify-sparse-x:
 	$(CRYSTAL) run --release tools/verify_sparse_x.cr -- $(SPARSE_N)
+
+influence-test:
+	$(CRYSTAL) spec spec/influence_spec.cr
+
+banzhaf-mc:
+	$(CRYSTAL) run --release tools/banzhaf_mc.cr
+
+BANZHAF_N ?= 1000
+bench-banzhaf:
+	$(CRYSTAL) run --release -Dlapack tools/bench_banzhaf.cr -- $(BANZHAF_N)
+
+POKEMON_CSV ?= $(HOME)/semrember/build/pokemon.csv
+pokemon-banzhaf:
+	$(CRYSTAL) run --release examples/pokemon_banzhaf.cr -- $(POKEMON_CSV)
+
+retention:
+	$(CRYSTAL) run --release tools/retention_experiment.cr -- $(POKEMON_CSV)
 
 # Static embedding models.  Not redistributed: fetched from the Hugging Face
 # hub and converted to the M2VE/M2VS format, verified by checksum.  No-op if

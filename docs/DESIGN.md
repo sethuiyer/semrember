@@ -185,11 +185,13 @@ src/tokenizer.cr        WordPiece and SentencePiece-Unigram
 src/static_encoder.cr   in-memory encoder for the static models
 src/server.cr           the Kemal routes and HTTP/JSON service
 src/server_cli.cr       the service executable entry point
+src/influence.cr        leave-one-out decision power and pruning
 src/cli.cr              the command line front end
 src/csv.cr              RFC 4180 reader
 spec/                   engine, tokenizer, persistence and HTTP regressions
 clients/python/         the Python client
-tools/                  table generator, model fetcher, parity harness, benchmarks
+tools/                  table generator, model fetcher, parity harness, benchmarks,
+                        Banzhaf Monte Carlo, retention experiment
 ```
 
 ## Format

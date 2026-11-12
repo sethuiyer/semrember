@@ -21,6 +21,9 @@ require "./static_encoder"
   lib LibSemremberLapack
     fun dpotrf_(uplo : UInt8*, n : Int32*, a : Float64*, lda : Int32*, info : Int32*) : Void
     fun dpotri_(uplo : UInt8*, n : Int32*, a : Float64*, lda : Int32*, info : Int32*) : Void
+    fun dgemm_(transa : UInt8*, transb : UInt8*, m : Int32*, n : Int32*, k : Int32*,
+               alpha : Float64*, a : Float64*, lda : Int32*, b : Float64*, ldb : Int32*,
+               beta : Float64*, c : Float64*, ldc : Int32*) : Void
   end
 {% end %}
 
@@ -191,6 +194,40 @@ module Semrember
       cholesky_inverse(m, n)
     rescue ArgumentError
       invert(m, n)
+    end
+
+    # C = A * B for row-major A (m×k) and B (k×n).  With LAPACK we pass the
+    # row-major operands as column-major transposes; the resulting C^T in
+    # column-major order is exactly C in row-major order.
+    def matmul(a : Array(Float64), b : Array(Float64), m : Int32, k : Int32, n : Int32) : Array(Float64)
+      {% if flag?(:lapack) %}
+        c = Array(Float64).new(m * n, 0_f64)
+        trans = 'N'.ord.to_u8
+        mm = m
+        nn = n
+        kk = k
+        alpha = 1.0
+        beta = 0.0
+        lda = n
+        ldb = k
+        ldc = n
+        # Fortran: C^T(n×m) = B^T(n×k) * A^T(k×m)
+        LibSemremberLapack.dgemm_(pointerof(trans), pointerof(trans), pointerof(nn), pointerof(mm),
+          pointerof(kk), pointerof(alpha), b.to_unsafe, pointerof(lda), a.to_unsafe,
+          pointerof(ldb), pointerof(beta), c.to_unsafe, pointerof(ldc))
+        c
+      {% else %}
+        c = Array(Float64).new(m * n, 0_f64)
+        m.times do |i|
+          n.times { |j| c[i * n + j] = 0.0 }
+          k.times do |p|
+            aip = a[i * k + p]
+            next if aip == 0.0
+            n.times { |j| c[i * n + j] += aip * b[p * n + j] }
+          end
+        end
+        c
+      {% end %}
     end
 
     # Inverse of the principal submatrix obtained by deleting row/column i.
@@ -365,7 +402,10 @@ module Semrember
       st64.each { |v| st_sq += v * v }
       joint = Math.sqrt(sumsq(val).to_f64 + st_sq).to_f32 + 1e-9_f32
       val = val.map { |v| v / joint }
-      st = st64.map { |v| (v / joint.to_f64).to_f32 }
+      # A static encoder returns no vector when every token is unknown.  Keep
+      # the static feature slot fixed-width so every consumer can index it.
+      st = Array(Float32).new(@d_static, 0_f32)
+      st64.each_with_index { |v, dd| st[dd] = (v / joint.to_f64).to_f32 if dd < @d_static }
       Features.new(idx, val, st)
     end
 
@@ -892,7 +932,7 @@ module Semrember
     #   A' = A_RR - A_Ri A_iR / A_ii
     # W receives the corresponding rank-one correction, and P_i is generated
     # on demand from the sparse feature rows.
-    private def delete_one(i : Int32) : Bool
+    protected def delete_one(i : Int32) : Bool
       n = @train_keys.size
       a = @a.not_nil!
       aii = a[i * n + i]

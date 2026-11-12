@@ -88,6 +88,13 @@ describe "Linalg.invert" do
     16.times { |i| actual[i].should be_close(expected[i], 1e-10) }
   end
 
+  it "multiplies row-major matrices" do
+    a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0] # 2x3
+    b = [7.0, 8.0, 9.0, 10.0, 11.0, 12.0] # 3x2
+    c = Semrember::Linalg.matmul(a, b, 2, 3, 2)
+    c.should eq [58.0, 64.0, 139.0, 154.0]
+  end
+
   it "deletes a principal submatrix exactly" do
     m = [4.0, 1.0, 2.0, 0.5,
          1.0, 3.0, 0.2, 1.0,
