@@ -1,6 +1,6 @@
 # Decision power and leave-one-out influence
 
-[README](../README.md) · [Engine design](DESIGN.md) · [Working memory](DESIGN.md#incremental-writer-measurements)
+[README](../README.md) · [Engine design](DESIGN.md) · [Retention pilot study](RETENTION_STUDY.md)
 
 This document defines the influence tooling, derives the exact leave-one-out
 shortcut, and reports what the experiments actually showed.

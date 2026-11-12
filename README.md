@@ -132,6 +132,7 @@ CI checks the examples, installation target, and persistence behavior.
 - [Optional static embedding models](MODELS.md)
 - [Engine design and historical measurements](docs/DESIGN.md)
 - [Decision power and leave-one-out influence](docs/INFLUENCE.md)
+- [Retention pilot study](docs/RETENTION_STUDY.md)
 - [AMEM v3 binary format](FORMAT.md)
 
 The service binds to `127.0.0.1:7379` by default and has no authentication.
