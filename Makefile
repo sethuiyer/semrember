@@ -6,7 +6,7 @@ PREFIX  ?= $(HOME)/.local
 DESTDIR ?=
 DX_PYTHON ?= python3
 
-.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke pilot-insurance pilot-insurance-live pilot-test bench-writer
+.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke pilot-insurance pilot-insurance-live pilot-test bench-writer verify-sparse-x
 
 all: cli server
 
@@ -72,6 +72,10 @@ bench: cli
 
 bench-writer:
 	$(CRYSTAL) run --release tools/bench_writer.cr
+
+SPARSE_N ?= 1000
+verify-sparse-x:
+	$(CRYSTAL) run --release tools/verify_sparse_x.cr -- $(SPARSE_N)
 
 # Static embedding models.  Not redistributed: fetched from the Hugging Face
 # hub and converted to the M2VE/M2VS format, verified by checksum.  No-op if
