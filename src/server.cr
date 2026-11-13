@@ -42,7 +42,7 @@ module Semrember
     def initialize(model : String?, static : String?, train : String? = nil,
                    key_col : String = "message", val_col : String = "action",
                    data : String? = nil, encryption_key : Bytes? = nil,
-                   min_counter : Int64 = 0)
+                   min_counter : Int64 = 0, index : Mips::Config? = nil)
       raise ArgumentError.new("--model and --train are mutually exclusive") if model && train
       raise ArgumentError.new("data and encryption_key must be supplied together") unless data.nil? == encryption_key.nil?
       raise ArgumentError.new("durable mode cannot be combined with --model or --train") if data && (model || train)
@@ -51,10 +51,10 @@ module Semrember
       @mem = if model
                Memory.load(model, static: encoder)
              elsif train
-               Memory.new(solver: :dual, static: encoder).fit(
+               Memory.new(solver: :dual, static: encoder, index: index).fit(
                  Csv.load_pairs(train.not_nil!, key_col, val_col).to_h)
              else
-               Memory.new(solver: :dual, static: encoder)
+               Memory.new(solver: :dual, static: encoder, index: index)
              end
       @records = {} of String => String
       @expiry = {} of String => Time
@@ -79,7 +79,7 @@ module Semrember
           @records, @expiry = store.load
           expired = @expiry.select { |_, deadline| deadline <= Time.utc }.keys
           expired.each { |key| @records.delete(key); @expiry.delete(key) }
-          @mem = Memory.new(solver: :dual, static: @encoder).fit(@records)
+          @mem = Memory.new(solver: :dual, static: @encoder, index: index).fit(@records)
           # Do not rewrite a valid snapshot merely because the process restarted.
           # Persist only a new file, a purge, or newly-recorded encoder metadata.
           if !snapshot_existed || !expired.empty? || store.encoder_upgrade_pending
@@ -89,6 +89,10 @@ module Semrember
           store.close
           raise ex
         end
+      end
+      if index
+        @mem.enable_index(index)
+        @mem.rebuild_index!
       end
     end
 
@@ -260,6 +264,12 @@ module Semrember
       j.field "solver", @mem.solver.to_s
       j.field "semantic_updates", @mem.writable?
       j.field "semantic_reads", @mem.observations_available
+      j.field "index", @mem.index_state.to_s
+      stats = @mem.index_stats
+      j.field "index_version", stats ? JSON::Any.new(stats[:version]) : JSON::Any.new(nil)
+      j.field "index_rank", stats ? JSON::Any.new(stats[:rank].to_i64) : JSON::Any.new(nil)
+      j.field "index_nodes", stats ? JSON::Any.new(stats[:nodes].to_i64) : JSON::Any.new(nil)
+      j.field "index_payload_bytes", stats ? JSON::Any.new(stats[:payload_bytes]) : JSON::Any.new(nil)
       j.field "exact_endpoints", ["GET", "PUT", "DELETE", "EXISTS", "SCAN"]
       j.field "semantic_endpoints", ["SIMILAR", "ESCALATE", "NOVELTY"]
     end

@@ -250,10 +250,22 @@ it.
   "solver": "dual",
   "semantic_updates": true,
   "semantic_reads": true,
+  "index": "ready",
+  "index_version": 1,
+  "index_rank": 32,
+  "index_nodes": 128,
+  "index_payload_bytes": 1368792,
   "exact_endpoints": ["GET", "PUT", "DELETE", "EXISTS", "SCAN"],
   "semantic_endpoints": ["SIMILAR", "ESCALATE", "NOVELTY"]
 }
 ```
+
+The optional read-side weight index is disabled by default. With
+`--index` (and optional `--index-rank`, `--index-leaf`, `--index-seed`), the
+service builds it once at startup. `/v1/info` reports `disabled`, `ready`, or
+`stale`; a write invalidates the published index and queries use the full
+scorer until restart or an explicit rebuild. Indexed results still pass through
+the exact Float32 finalist scorer, so responses and tie-breaking are unchanged.
 
 ---
 
@@ -292,6 +304,7 @@ dependency.
 
 ```bash
 semrember-server --train corpus.csv --key message --value action
+semrember-server --train corpus.csv --key message --value action --index
 semrember-server --model brain.amem --static models/potion-base-8M.bin
 semrember-server --host 0.0.0.0 --port 7379
 ```

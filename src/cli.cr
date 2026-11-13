@@ -22,6 +22,9 @@ module Semrember
       io.puts "  semrember query  <model.amem> <text> [topk]"
       io.puts "  semrember scores <model.amem> <text>"
       io.puts "  semrember info   <model.amem>"
+      io.puts ""
+      io.puts "  query/info accept [--index] [--index-rank R] [--index-leaf L] [--index-seed S]"
+      io.puts "  The index accelerates label scoring only; it is rebuilt from the AMEM reader."
     end
 
     private def load_csv(path : String, key_col : String, val_col : String) : Hash(String, String)
@@ -53,8 +56,62 @@ module Semrember
       {args, static}
     end
 
+    # `--index`, `--no-index` and `--index-*` may appear anywhere.
+    private def extract_index(argv : Array(String)) : Tuple(Array(String), Mips::Config?)
+      args = [] of String
+      enabled = false
+      rank = 32
+      leaf = 16
+      seed = 0
+      i = 0
+      while i < argv.size
+        case argv[i]
+        when "--index"
+          enabled = true
+          i += 1
+        when "--no-index"
+          enabled = false
+          i += 1
+        when "--index-rank"
+          raise ArgumentError.new("missing value for --index-rank") if i + 1 >= argv.size
+          rank = argv[i + 1].to_i
+          enabled = true
+          i += 2
+        when "--index-leaf"
+          raise ArgumentError.new("missing value for --index-leaf") if i + 1 >= argv.size
+          leaf = argv[i + 1].to_i
+          enabled = true
+          i += 2
+        when "--index-seed"
+          raise ArgumentError.new("missing value for --index-seed") if i + 1 >= argv.size
+          seed = argv[i + 1].to_i
+          enabled = true
+          i += 2
+        else
+          args << argv[i]
+          i += 1
+        end
+      end
+      raise ArgumentError.new("index rank must be nonnegative") if rank < 0
+      raise ArgumentError.new("index leaf must be positive") if leaf <= 0
+      raise ArgumentError.new("index seed must be nonnegative") if seed < 0
+      config = enabled ? Mips::Config.new(rank: rank, leaf_size: leaf, seed: seed) : nil
+      {args, config}
+    end
+
+    private def load_indexed(path : String, static : StaticEncoder?,
+                              config : Mips::Config?) : Memory
+      mem = Memory.load(path, static: static)
+      if config
+        mem.enable_index(config)
+        mem.rebuild_index!
+      end
+      mem
+    end
+
     def run(argv : Array(String)) : Int32
       argv, static_path = extract_static(argv)
+      argv, index_config = extract_index(argv)
       if argv.empty? || {"-h", "--help", "help"}.includes?(argv[0])
         usage(STDOUT)
         return 0
@@ -88,7 +145,7 @@ module Semrember
         0
       when "query"
         raise "usage: query <model.amem> <text> [topk]" if argv.size < 3
-        mem = Memory.load(argv[1], static: static)
+        mem = load_indexed(argv[1], static, index_config)
         topk = argv.size > 3 ? argv[3].to_i : 1
         hits = mem.query(argv[2], topk)
         puts JSON.build { |j|
@@ -167,7 +224,7 @@ module Semrember
         0
       when "info"
         raise "usage: info <model.amem>" if argv.size < 2
-        mem = Memory.load(argv[1], static: static)
+        mem = load_indexed(argv[1], static, index_config)
         puts JSON.build { |j|
           j.object do
             j.field "labels" do
@@ -177,6 +234,10 @@ module Semrember
             j.field "d_static", mem.d_static
             j.field "min_df", mem.min_df
             j.field "vocab_size", mem.vocab_size
+            j.field "index", mem.index_state.to_s
+            stats = mem.index_stats
+            j.field "index_version", stats ? JSON::Any.new(stats[:version]) : JSON::Any.new(nil)
+            j.field "index_rank", stats ? JSON::Any.new(stats[:rank].to_i64) : JSON::Any.new(nil)
           end
         }
         0

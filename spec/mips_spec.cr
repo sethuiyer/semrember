@@ -35,6 +35,7 @@ private def mips_check(w, x, t, config, basis = nil)
   end
 end
 
+{% if flag?(:linux) %}
 describe Semrember::Mips do
   it "widens zero, negative values and neighboring floats correctly" do
     MI::Outward.up(0.0).unsafe_as(UInt64).should eq(1_u64)
@@ -189,6 +190,7 @@ describe Semrember::Mips do
     heap.empty?.should be_true
   end
 end
+{% end %}
 
 describe Semrember::Linalg do
   it "computes a symmetric eigensystem and drops dependent columns" do

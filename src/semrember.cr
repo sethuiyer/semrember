@@ -16,6 +16,7 @@ require "./codec"
 require "./static_encoder"
 
 require "./linalg"
+require "./weight_index"
 
 module Semrember
   class UnavailableError < Exception
@@ -103,11 +104,15 @@ module Semrember
     @train_feats : Array(Features)
     @a : Array(Float64)?  # dual inverse, N x N
     @novelty_inverse : Array(Float64)?
+    @model_version : Int64
+    @index_config : Mips::Config?
+    @index : Mips::Index?
 
     def initialize(@solver : Symbol = :dual, @min_df : Int32 = 1,
                    @sweeps : Int32 = SWEEPS, @beta : Float32 = BETA,
                    @rls_reg : Float64 = DEFAULT_REG,
-                   static : StaticEncoder? = nil)
+                   static : StaticEncoder? = nil,
+                   index : Mips::Config? = nil)
       raise "solver must be :delta, :rls or :dual" unless {:delta, :rls, :dual}.includes?(@solver)
       raise ArgumentError.new("rls_reg must be finite and > 0") unless @rls_reg.finite? && @rls_reg > 0
       raise ArgumentError.new("min_df must be > 0") if @min_df <= 0
@@ -127,6 +132,9 @@ module Semrember
       @a = nil
       @novelty_inverse = nil
       @observations_available = true
+      @model_version = 0_i64
+      @index_config = index
+      @index = nil
     end
 
     def vocab_size : Int32
@@ -271,6 +279,8 @@ module Semrember
 
     # ── writers ─────────────────────────────────────────────────────────
     def fit(pairs : Hash(String, String), weights : Hash(String, Int32)? = nil)
+      @model_version += 1
+      @index = nil
       keys = [] of String
       values = [] of String
       pairs.each do |(k, v)|
@@ -437,7 +447,10 @@ module Semrember
 
     # ── reading ─────────────────────────────────────────────────────────
     def scores(text : String) : Array(Float32)
-      f = encode(text)
+      scores_features(encode(text))
+    end
+
+    private def scores_features(f : Features) : Array(Float32)
       d = d_total
       t = rows
       out = Array(Float32).new(t, 0_f32)
@@ -450,9 +463,95 @@ module Semrember
       out
     end
 
+    # Exact scores for a subset of labels. The per-label feature order is
+    # identical to scores_features, so finalists are bit-for-bit the same.
+    private def score_labels(f : Features, labels : Array(Int32)) : Array(Float32)
+      d = d_total
+      out = Array(Float32).new(labels.size, 0_f32)
+      f.idx.each_with_index do |ix, k|
+        labels.each_with_index { |c, j| out[j] += @w[c * d + ix] * f.val[k] }
+      end
+      f.st.each_with_index do |v, dd|
+        labels.each_with_index { |j, c| out[c] += @w[j * d + @d_tfidf + dd] * v }
+      end
+      out
+    end
+
+    # ── optional read-side weight index ────────────────────────────────
+    # The index is derived from W, never persisted, and never built on a
+    # query path. A query uses it only when the published version matches
+    # the current model version; otherwise the reference scorer runs.
+    def index_version : Int64?
+      @index.try(&.version)
+    end
+
+    def index_stats : NamedTuple(rank: Int32, nodes: Int32, payload_bytes: Int64, version: Int64)?
+      index = @index
+      return nil unless index
+      {rank: index.rank, nodes: index.node_count,
+       payload_bytes: index.payload_bytes, version: index.version}
+    end
+
+    def index_ready? : Bool
+      idx = @index
+      !idx.nil? && idx.version == @model_version
+    end
+
+    def index_state : Symbol
+      return :disabled unless @index_config
+      index_ready? ? :ready : :stale
+    end
+
+    def enable_index(config : Mips::Config) : self
+      @index_config = config
+      @index = nil
+      self
+    end
+
+    def disable_index : self
+      @index_config = nil
+      @index = nil
+      self
+    end
+
+    # Build from an immutable W snapshot, then publish only if the model
+    # did not change during construction. Returns false on failure or a
+    # version race; callers keep using the full scorer in that case.
+    def rebuild_index! : Bool
+      config = @index_config
+      return false unless config
+      return false if @w.empty? || @labels.empty?
+      version = @model_version
+      snapshot = @w.dup
+      begin
+        index = Mips::Index.new(snapshot, @labels.size, d_total, config, version: version)
+      rescue ArgumentError
+        @index = nil
+        return false
+      end
+      if version == @model_version
+        @index = index
+        true
+      else
+        false
+      end
+    end
+
     def query(text : String, topk : Int32 = 1) : Array(Tuple(String, Float32))
       raise ArgumentError.new("topk must be nonnegative") if topk < 0
-      s = scores(text)
+      return [] of Tuple(String, Float32) if topk == 0
+      f = encode(text)
+      index = @index
+      if index && index.version == @model_version && topk < @labels.size
+        dense = f.dense(@d_tfidf, @d_static)
+        result = index.search(dense, topk, expected_version: @model_version) do |ids|
+          score_labels(f, ids)
+        end
+        unless result.fallback?
+          return result.hits.map { |hit| {@labels[hit.label], hit.score} }
+        end
+      end
+      s = scores_features(f)
       order = (0...s.size).to_a.sort_by { |i| {-s[i], i} }
       order.first(topk).map { |i| {@labels[i], s[i]} }
     end
@@ -549,6 +648,8 @@ module Semrember
     # key replaces its value instead of quietly adding a second observation.
     def set(key : String, value : String) : String?
       raise UnavailableError.new("exact writes require a live dual writer; fit the original corpus first") unless writable?
+      @model_version += 1
+      @index = nil
       if @train_keys.empty?
         fit({key => value})
         return nil
@@ -819,6 +920,8 @@ module Semrember
       indices = [] of Int32
       @train_keys.each_with_index { |k, i| indices << i if removed.includes?(k) }
       return false if indices.empty?
+      @model_version += 1
+      @index = nil
       indices.sort!.reverse!
       indices.each do |i|
         return rebuild_after_delete(removed) unless delete_one(i)
@@ -877,6 +980,8 @@ module Semrember
                         idf : Array(Float32), bloom : Bytes,
                         d_tfidf : Int32, d_static : Int32,
                         w : Array(Float32))
+      @model_version += 1
+      @index = nil
       @labels = labels
       @vocab = vocab
       @idf = idf

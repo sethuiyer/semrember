@@ -175,3 +175,19 @@ same inverse as the dual writer, so the first query is effectively free. A
 static-encoder model builds a separate lexical inverse on its first novelty
 query and then updates it incrementally. A label-only overwrite does not change
 either inverse. Benchmark with your corpus and read/write mix.
+
+## Read-side weight index
+
+`--index` (optionally `--index-rank`, `--index-leaf`, `--index-seed`) builds a
+derived branch-and-bound index over the prediction rows `W`. It accelerates
+label scoring only: SIMILAR still scans stored observations, and NOVELTY still
+uses the lexical inverse.
+
+The index is not stored in AMEM. A service builds it once at startup from the
+current model. Every successful `set`/`delete`/expiry purge invalidates the
+published index; queries then use the full scorer until restart or an explicit
+`Memory#rebuild_index!`. `/v1/info` reports `index` as `ready`, `stale`, or
+`disabled`. Indexed queries still pass through the exact Float32 finalist
+scorer; the index only prunes labels whose upper bound cannot beat the current
+k-th score. See [the weight-index contract](MIPS.md).
+

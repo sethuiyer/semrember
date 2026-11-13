@@ -170,6 +170,32 @@ describe Semrember::Server do
     body["verified"].as_bool.should be_true
   end
 
+  it "reports and uses an optional weight index" do
+    next unless Semrember::Mips.supported_environment?(1_f32)
+    path = File.join(__DIR__, "../examples/incidents.csv")
+    server = Semrember::Server.new(nil, nil, path,
+      index: Semrember::Mips::Config.new(rank: 3, leaf_size: 2))
+    begin
+      _, info = request(server, "GET", "/v1/info")
+      info["index"].as_s.should eq "ready"
+      info["index_rank"].as_i.should eq 3_i64
+      info["index_nodes"].as_i.should be > 0
+
+      status, body = request(server, "POST", "/v1/escalate",
+        {text: "certificate has expired"}.to_json)
+      status.should eq 200
+      body["handled"].as_bool.should be_true
+      body["action"].as_s.should eq "renew_certificate"
+
+      put(server, "new index key", "free_disk")
+      _, info = request(server, "GET", "/v1/info")
+      info["index"].as_s.should eq "stale"
+      request(server, "POST", "/v1/escalate", {text: "host down"}.to_json)[0].should eq 200
+    ensure
+      server.close
+    end
+  end
+
   it "reports unavailable semantic state explicitly for loaded models" do
     path = File.tempname("semrember-server", ".amem")
     begin

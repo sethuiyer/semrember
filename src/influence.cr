@@ -533,6 +533,9 @@ module Semrember
       @d_tfidf = other.@d_tfidf
       @d_static = other.@d_static
       @observations_available = other.@observations_available
+      @index = nil
+      @index_config = other.@index_config
+      @model_version = other.@model_version &+ 1
     end
 
     # Float64 score vector computed from A and the sparse features.  This is

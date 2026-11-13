@@ -1,10 +1,11 @@
-# Standalone weight index (PR A)
+# Read-side weight index
 
-This change adds an opt-in building block, `Semrember::Mips::Index`, for
-best-bound-first search over Float32 weight rows. It does **not** change
-`Memory#query`, `scores`, the server, AMEM, influence, novelty, similarity,
-or the ridge writer. SUTRA/shard selection and router training are separate
-work. Nothing is enabled automatically.
+`Semrember::Mips::Index` is an opt-in, exact branch-and-bound index over
+Float32 weight rows. `Memory` uses it for label scoring when an `index:`
+configuration is supplied and the published version matches the model; all
+other readouts, the ridge writer, AMEM, influence, novelty, and similarity are
+unchanged. SUTRA/shard selection and router training are separate work.
+Nothing is enabled automatically.
 
 ## Contract and use
 
@@ -25,6 +26,15 @@ else
   # Hits contain original Float32 scores, descending score / ascending label id.
   result.hits
 end
+```
+
+`Memory` wraps the same contract:
+
+```crystal
+mem = Semrember::Memory.new(index: Semrember::Mips::Config.new(rank: 32, leaf_size: 16))
+  .fit(corpus)
+mem.rebuild_index!      # explicit; never on the request path
+mem.query(text, 3)      # index when ready, reference scorer otherwise
 ```
 
 The callback is a trusted part of this API: it must use the indexed weight
@@ -110,20 +120,25 @@ node-id ties. Rank, leaf size and work budgets are explicit configuration.
 `payload_bytes` estimates numeric arrays and node data only, not allocator,
 object-header, temporary-build or reference-weight storage.
 
-## Lifecycle: next integration change
+## Lifecycle and integration
 
-This standalone PR records `Index#version` and rejects mismatched query
-versions. It does not yet implement a Memory-owned version counter, a
-publication lock, asynchronous rebuilds, CLI flags or `/v1/info` fields.
+`Memory` owns a model version. `fit`, `set`, `delete_many`, `adopt`/load and
+influence copies bump it and drop the published index. `rebuild_index!`
+snapshots W, builds outside the request path, and publishes only if the
+version is unchanged; a stale build is discarded. `query` uses the index only
+when `index.version == model_version`; otherwise it runs the complete
+reference scorer. No index is built on a request path or serialized into AMEM.
 
-Integration must take W, labels and version under the same lock; build outside
-the lock; then compare version and publish atomically under that lock. Queries
-must hold a consistent model/index snapshot through exact callback scoring.
-A version check followed by reading mutable W is insufficient. Writes,
-pruning, adopt/load and copy operations invalidate the version; stale queries
-use the reference scorer. No index is built on a request path or serialized
-into AMEM. A race test belongs with that integration, not a simulated test of
-an unimplemented publication mechanism.
+A version check followed by reading mutable W is not enough in isolation: the
+publication path compares versions and the caller must not mutate W outside
+the Memory API. Writes invalidate the published index, so a long-lived service
+uses the full scorer until it is restarted or an explicit rebuild runs.
+
+Server flags: `--index`, `--index-rank R`, `--index-leaf L`,
+`--index-seed S`. The index is built once at startup. `/v1/info` reports
+`index` (`ready`, `stale`, `disabled`), `index_version`, `index_rank`,
+`index_nodes`, and `index_payload_bytes`. CLI `query`/`info` accept the same
+flags and build the reader index before use.
 
 ## Verification and benchmarks
 
