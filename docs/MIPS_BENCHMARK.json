@@ -1,0 +1,151 @@
+{
+  "compiler": "Crystal 1.14.0 / LLVM 19.1.6",
+  "build_flags": "--release",
+  "measurement": "ratio of median times; five alternating-order repetitions",
+  "results": [
+    {
+      "mode": "low-rank",
+      "labels": 1024,
+      "dimension": 4096,
+      "requested_rank": 32,
+      "actual_rank": 32,
+      "leaf": 16,
+      "queries": 50,
+      "repeats": 5,
+      "full_samples": [
+        2.99815521,
+        2.3373224329999998,
+        1.965439647,
+        1.968838452,
+        2.559930561
+      ],
+      "indexed_samples": [
+        0.232646314,
+        0.252169931,
+        0.177304766,
+        0.172191116,
+        0.197905681
+      ],
+      "topk": 3,
+      "seed": 0,
+      "build_seconds": 17.836065764,
+      "numeric_payload_bytes": 1368792,
+      "full_seconds": 2.3373224329999998,
+      "indexed_seconds": 0.197905681,
+      "scoring_speedup": 11.81028468303545,
+      "mean_nodes": 7.0,
+      "mean_labels": 16.0,
+      "fallback_rate": 0.0,
+      "parity": true,
+      "scope": "standalone scoring; no end-to-end speedup claimed"
+    },
+    {
+      "mode": "gaussian",
+      "labels": 256,
+      "dimension": 256,
+      "requested_rank": 16,
+      "actual_rank": 16,
+      "leaf": 16,
+      "queries": 30,
+      "repeats": 5,
+      "full_samples": [
+        0.005517248,
+        0.005134019,
+        0.006870473,
+        0.007222763,
+        0.007869605
+      ],
+      "indexed_samples": [
+        0.008416009,
+        0.009867529,
+        0.007637259,
+        0.009784303,
+        0.011476173
+      ],
+      "topk": 3,
+      "seed": 0,
+      "build_seconds": 0.076457345,
+      "numeric_payload_bytes": 75864,
+      "full_seconds": 0.006870473,
+      "indexed_seconds": 0.009784303,
+      "scoring_speedup": 0.7021934010015839,
+      "mean_nodes": 31.0,
+      "mean_labels": 256.0,
+      "fallback_rate": 0.0,
+      "parity": true,
+      "scope": "standalone scoring; no end-to-end speedup claimed"
+    },
+    {
+      "mode": "duplicates",
+      "labels": 256,
+      "dimension": 256,
+      "requested_rank": 16,
+      "actual_rank": 16,
+      "leaf": 16,
+      "queries": 30,
+      "repeats": 5,
+      "full_samples": [
+        0.007234476,
+        0.004760129,
+        0.005974113,
+        0.011436668,
+        0.007443807
+      ],
+      "indexed_samples": [
+        0.00683646,
+        0.005790289,
+        0.008419225,
+        0.007815584,
+        0.00589749
+      ],
+      "topk": 3,
+      "seed": 0,
+      "build_seconds": 0.05890543,
+      "numeric_payload_bytes": 75864,
+      "full_seconds": 0.007234476,
+      "indexed_seconds": 0.00683646,
+      "scoring_speedup": 1.058219604883229,
+      "mean_nodes": 9.0,
+      "mean_labels": 64.0,
+      "fallback_rate": 0.0,
+      "parity": true,
+      "scope": "standalone scoring; no end-to-end speedup claimed"
+    },
+    {
+      "mode": "sparse",
+      "labels": 256,
+      "dimension": 256,
+      "requested_rank": 16,
+      "actual_rank": 16,
+      "leaf": 16,
+      "queries": 30,
+      "repeats": 5,
+      "full_samples": [
+        0.004619866,
+        0.004806475,
+        0.005052146,
+        0.007767223,
+        0.010134832
+      ],
+      "indexed_samples": [
+        0.010154557,
+        0.011860002,
+        0.010825724,
+        0.013246249,
+        0.028910161
+      ],
+      "topk": 3,
+      "seed": 0,
+      "build_seconds": 0.063937713,
+      "numeric_payload_bytes": 75864,
+      "full_seconds": 0.005052146,
+      "indexed_seconds": 0.011860002,
+      "scoring_speedup": 0.425981884320087,
+      "mean_nodes": 31.0,
+      "mean_labels": 256.0,
+      "fallback_rate": 0.0,
+      "parity": true,
+      "scope": "standalone scoring; no end-to-end speedup claimed"
+    }
+  ]
+}
