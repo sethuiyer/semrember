@@ -6,7 +6,7 @@ PREFIX  ?= $(HOME)/.local
 DESTDIR ?=
 DX_PYTHON ?= python3
 
-.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke pilot-insurance pilot-insurance-live pilot-test bench-writer verify-sparse-x influence-test banzhaf-mc bench-banzhaf pokemon-banzhaf retention poison-check compact-pilot
+.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke pilot-insurance pilot-insurance-live pilot-test bench-writer verify-sparse-x influence-test banzhaf-mc bench-banzhaf pokemon-banzhaf retention poison-check compact-pilot maxsat
 
 all: cli server
 
@@ -19,6 +19,10 @@ $(BUILD):
 
 cli: | $(BUILD)
 	$(CRYSTAL) build $(CRYSTAL_FLAGS) src/cli.cr -o $(BUILD)/semrember
+
+# Standalone weighted MaxSAT approximator (the NuWLS core in Crystal).
+maxsat: | $(BUILD)
+	$(CRYSTAL) build $(CRYSTAL_FLAGS) src/maxsat_cli.cr -o $(BUILD)/maxsat
 
 deps: lib/.semrember-deps
 
