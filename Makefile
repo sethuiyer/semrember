@@ -122,3 +122,10 @@ models-multilingual: fetch-model
 
 clean:
 	rm -rf $(BUILD)
+
+.PHONY: mips-test bench-mips
+mips-test:
+	$(CRYSTAL) spec spec/mips_spec.cr
+
+bench-mips:
+	$(CRYSTAL) run $(CRYSTAL_FLAGS) tools/bench_mips.cr -- $(MIPS_ARGS)

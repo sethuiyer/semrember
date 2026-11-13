@@ -20,6 +20,8 @@ jobs:
         run: make all fetch-model
       - name: Test
         run: make test
+      - name: Release-mode weight-index parity
+        run: crystal spec --release spec/mips_spec.cr
       - name: HTTP smoke test
         run: make smoke
       - name: Encrypted hard-kill recovery
