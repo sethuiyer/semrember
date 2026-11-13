@@ -6,7 +6,7 @@ PREFIX  ?= $(HOME)/.local
 DESTDIR ?=
 DX_PYTHON ?= python3
 
-.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke pilot-insurance pilot-insurance-live pilot-test bench-writer verify-sparse-x influence-test banzhaf-mc bench-banzhaf pokemon-banzhaf retention poison-check compact-pilot maxsat
+.PHONY: all deps cli server spec test parity bench models models-base models-multilingual clean fetch-model smoke install dx-smoke pilot-insurance pilot-insurance-live pilot-test bench-writer verify-sparse-x influence-test banzhaf-mc bench-banzhaf pokemon-banzhaf retention poison-check compact-pilot maxsat shard-plan
 
 all: cli server
 
@@ -133,3 +133,7 @@ mips-test:
 
 bench-mips:
 	$(CRYSTAL) run $(CRYSTAL_FLAGS) tools/bench_mips.cr -- $(MIPS_ARGS)
+
+SHARD_ARGS ?= examples/incidents.csv --key message --value action --budget 20
+shard-plan:
+	$(CRYSTAL) run $(CRYSTAL_FLAGS) tools/shard_plan.cr -- $(SHARD_ARGS)

@@ -134,6 +134,7 @@ CI checks the examples, installation target, and persistence behavior.
 - [Core mathematics](docs/MATH.md)
 - [MaxSAT core in Crystal](docs/MAXSAT.md)
 - [Read-side weight index](docs/MIPS.md)
+- [SUTRA shard planner](docs/SHARDS.md)
 - [Decision power and leave-one-out influence](docs/INFLUENCE.md)
 - [15-row worked example](docs/WORKED_EXAMPLE.md)
 - [Retention pilot study](docs/RETENTION_STUDY.md)
