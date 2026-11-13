@@ -315,6 +315,32 @@ module Semrember
       @observations_available && @solver == :dual
     end
 
+    # Build a dual model over a subset of the parent's observations using
+    # the parent's frozen vocabulary, IDF, labels and regularization. This
+    # is the shard-evaluation primitive: it never refits the feature map.
+    def subset(indices : Array(Int32)) : Memory
+      raise UnavailableError.new("subset requires a live dual writer") unless writable?
+      if indices.any? { |i| i < 0 || i >= @train_keys.size }
+        raise ArgumentError.new("subset index out of range")
+      end
+      child = Memory.new(solver: :dual, min_df: @min_df, sweeps: @sweeps,
+        beta: @beta, rls_reg: @rls_reg, static: @static)
+      child.adopt_subset(self, indices)
+      child
+    end
+
+    # Convenience: all observations whose parent label is in the given set.
+    # Label coordinates stay global; labels absent from the subset simply
+    # have zero rows in the child's W.
+    def subset_by_labels(labels : Enumerable(String)) : Memory
+      wanted = labels.to_set
+      indices = [] of Int32
+      @train_y.each_with_index do |y, i|
+        indices << i if wanted.includes?(@labels[y])
+      end
+      subset(indices)
+    end
+
     private def d_total : Int32
       @d_tfidf + @d_static
     end
@@ -971,6 +997,29 @@ module Semrember
         end
         f.write(buf)
       end
+    end
+
+    # Copy the parent's frozen feature map and labels, select observations,
+    # then solve the child dual system from those feature rows. The parent's
+    # matrices are never reused, so later parent mutations cannot leak in.
+    protected def adopt_subset(parent : Memory, indices : Array(Int32))
+      @labels = parent.@labels.dup
+      @label_idx = parent.@label_idx.dup
+      @vocab = parent.@vocab.dup
+      @idf = parent.@idf.dup
+      @bloom = parent.@bloom.dup
+      @d_tfidf = parent.@d_tfidf
+      @d_static = parent.@d_static
+      @train_keys = Array(String).new(indices.size) { |j| parent.@train_keys[indices[j]] }
+      @train_y = Array(Int32).new(indices.size) { |j| parent.@train_y[indices[j]] }
+      @train_feats = Array(Features).new(indices.size) { |j| parent.@train_feats[indices[j]] }
+      dual_rebuild(@train_feats, @train_y)
+      @stored = indices.size.to_i32
+      @observations_available = true
+      @novelty_inverse = nil
+      @model_version = 1_i64
+      @index = nil
+      @index_config = nil
     end
 
     # ── loading ────────────────────────────────────────────────────────
